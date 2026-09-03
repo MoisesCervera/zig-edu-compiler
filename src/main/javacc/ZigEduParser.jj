@@ -1,0 +1,722 @@
+options {
+    STATIC = false;
+    LOOKAHEAD = 2;
+    UNICODE_INPUT = true;
+    KEEP_LINE_COLUMN = true;
+}
+
+PARSER_BEGIN(ZigEduParser)
+package mx.edu.automatas.zigedu.parser;
+
+import mx.edu.automatas.zigedu.ast.Ast;
+import mx.edu.automatas.zigedu.ast.Ast.*;
+
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+public class ZigEduParser {
+    private SourceSpan span(Token start, Token end) {
+        return new SourceSpan(
+                start.beginLine,
+                start.beginColumn,
+                end.endLine,
+                end.endColumn
+        );
+    }
+
+    private SourceSpan merge(Ast.Node start, Ast.Node end) {
+        return new SourceSpan(
+                start.span().line(),
+                start.span().column(),
+                end.span().endLine(),
+                end.span().endColumn()
+        );
+    }
+
+    private SourceSpan spanFrom(Ast.Node start, Token end) {
+        return new SourceSpan(
+                start.span().line(),
+                start.span().column(),
+                end.endLine,
+                end.endColumn
+        );
+    }
+
+    private SourceSpan spanFrom(Token start, Ast.Node end) {
+        return new SourceSpan(
+                start.beginLine,
+                start.beginColumn,
+                end.span().endLine(),
+                end.span().endColumn()
+        );
+    }
+}
+PARSER_END(ZigEduParser)
+
+SKIP : {
+    < WHITESPACE: (" " | "\t" | "\r" | "\n")+ >
+|   < LINE_COMMENT: "//" (~["\r", "\n"])* >
+}
+
+TOKEN : {
+    < PUB: "pub" >
+|   < FN: "fn" >
+|   < CONST: "const" >
+|   < VAR: "var" >
+|   < IF: "if" >
+|   < ELSE: "else" >
+|   < WHILE: "while" >
+|   < FOR: "for" >
+|   < SWITCH: "switch" >
+|   < RETURN: "return" >
+|   < BREAK: "break" >
+|   < CONTINUE: "continue" >
+|   < AND: "and" >
+|   < OR: "or" >
+|   < TRUE: "true" >
+|   < FALSE: "false" >
+|   < TYPE_I32: "i32" >
+|   < TYPE_F64: "f64" >
+|   < TYPE_U8: "u8" >
+|   < TYPE_BOOL: "bool" >
+|   < TYPE_VOID: "void" >
+|   < LEN: "len" >
+}
+
+TOKEN : {
+    < PLUS_EQUAL: "+=" >
+|   < MINUS_EQUAL: "-=" >
+|   < STAR_EQUAL: "*=" >
+|   < SLASH_EQUAL: "/=" >
+|   < PERCENT_EQUAL: "%=" >
+|   < EQUAL_EQUAL: "==" >
+|   < NOT_EQUAL: "!=" >
+|   < LESS_EQUAL: "<=" >
+|   < GREATER_EQUAL: ">=" >
+|   < DOT_DOT: ".." >
+|   < ARROW: "=>" >
+|   < EQUAL: "=" >
+|   < PLUS: "+" >
+|   < MINUS: "-" >
+|   < STAR: "*" >
+|   < SLASH: "/" >
+|   < PERCENT: "%" >
+|   < NOT: "!" >
+|   < LESS: "<" >
+|   < GREATER: ">" >
+|   < LPAREN: "(" >
+|   < RPAREN: ")" >
+|   < LBRACE: "{" >
+|   < RBRACE: "}" >
+|   < LBRACKET: "[" >
+|   < RBRACKET: "]" >
+|   < COMMA: "," >
+|   < COLON: ":" >
+|   < SEMICOLON: ";" >
+|   < DOT: "." >
+|   < PIPE: "|" >
+|   < UNDERSCORE: "_" >
+}
+
+TOKEN : {
+    < #DIGIT: ["0"-"9"] >
+|   < #EXPONENT: ["e", "E"] (["+", "-"])? (<DIGIT>)+ >
+|   < FLOAT:
+          (<DIGIT>)+ "." (<DIGIT>)+ (<EXPONENT>)?
+        | (<DIGIT>)+ <EXPONENT>
+    >
+|   < INTEGER: (<DIGIT>)+ >
+|   < CHAR_LITERAL:
+        "'"
+        (
+            "\\" ["n", "r", "t", "\\", "'"]
+          | ~["'", "\\", "\r", "\n"]
+        )
+        "'"
+    >
+|   < IDENTIFIER: ["A"-"Z", "a"-"z", "_"] (["A"-"Z", "a"-"z", "0"-"9", "_"])* >
+}
+
+Program ParseProgram() :
+{
+    List<FunctionDecl> functions = new ArrayList<>();
+    FunctionDecl function;
+    Token eof;
+    SourceSpan programSpan;
+}
+{
+    (
+        function = FunctionDeclaration()
+        { functions.add(function); }
+    )+
+    eof = <EOF>
+    {
+        FunctionDecl first = functions.get(0);
+        programSpan = new SourceSpan(
+                first.span().line(),
+                first.span().column(),
+                eof.endLine,
+                eof.endColumn
+        );
+        return new Program(functions, programSpan);
+    }
+}
+
+FunctionDecl FunctionDeclaration() :
+{
+    Token pub = null;
+    Token fn;
+    Token name;
+    Token end;
+    List<Parameter> parameters = new ArrayList<>();
+    TypeNode returnType;
+    Block body;
+}
+{
+    [ pub = <PUB> ]
+    fn = <FN>
+    name = <IDENTIFIER>
+    <LPAREN>
+    [ ParameterList(parameters) ]
+    <RPAREN>
+    returnType = Type()
+    body = Block()
+    {
+        end = getToken(0);
+        return new FunctionDecl(
+                pub != null,
+                name.image,
+                parameters,
+                returnType,
+                body,
+                span(pub != null ? pub : fn, end)
+        );
+    }
+}
+
+void ParameterList(List<Parameter> parameters) :
+{
+    Parameter parameter;
+}
+{
+    parameter = Parameter() { parameters.add(parameter); }
+    (
+        <COMMA>
+        parameter = Parameter() { parameters.add(parameter); }
+    )*
+}
+
+Parameter Parameter() :
+{
+    Token name;
+    TypeNode type;
+}
+{
+    name = <IDENTIFIER> <COLON> type = Type()
+    { return new Parameter(name.image, type, span(name, getToken(0))); }
+}
+
+TypeNode Type() :
+{
+    Token token;
+    Token start;
+    Token size;
+    TypeNode elementType;
+}
+{
+      (
+          token = <TYPE_I32>
+        | token = <TYPE_F64>
+        | token = <TYPE_U8>
+        | token = <TYPE_BOOL>
+        | token = <TYPE_VOID>
+      )
+      { return new PrimitiveType(token.image, span(token, token)); }
+    |
+      start = <LBRACKET> size = <INTEGER> <RBRACKET> elementType = Type()
+      {
+          return new ArrayType(
+                  Integer.parseInt(size.image),
+                  elementType,
+                  span(start, getToken(0))
+          );
+      }
+}
+
+Block Block() :
+{
+    Token start;
+    Token end;
+    List<Statement> statements = new ArrayList<>();
+    Statement statement;
+}
+{
+    start = <LBRACE>
+    (
+        statement = Statement()
+        { statements.add(statement); }
+    )*
+    end = <RBRACE>
+    { return new Block(statements, span(start, end)); }
+}
+
+Statement Statement() :
+{
+    Statement statement;
+}
+{
+      statement = VariableDeclaration() { return statement; }
+    | statement = IfStatement() { return statement; }
+    | statement = WhileStatement() { return statement; }
+    | statement = ForStatement() { return statement; }
+    | statement = SwitchStatement() { return statement; }
+    | statement = ReturnStatement() { return statement; }
+    | statement = BreakStatement() { return statement; }
+    | statement = ContinueStatement() { return statement; }
+    | statement = Block() { return statement; }
+    | statement = ExpressionOrAssignmentStatement() { return statement; }
+}
+
+Statement VariableDeclaration() :
+{
+    Token kind;
+    Token name;
+    Token end;
+    TypeNode type = null;
+    Expression initializer;
+}
+{
+    ( kind = <CONST> | kind = <VAR> )
+    name = <IDENTIFIER>
+    [ <COLON> type = Type() ]
+    <EQUAL>
+    initializer = Expression()
+    end = <SEMICOLON>
+    {
+        return new VariableDecl(
+                kind.kind == CONST,
+                name.image,
+                Optional.ofNullable(type),
+                initializer,
+                span(kind, end)
+        );
+    }
+}
+
+Statement ExpressionOrAssignmentStatement() :
+{
+    Expression left;
+    Expression right = null;
+    Token operator = null;
+    Token end;
+}
+{
+    left = Expression()
+    [ operator = AssignmentOperator() right = Expression() ]
+    end = <SEMICOLON>
+    {
+        if (operator == null) {
+            return new ExpressionStmt(left, spanFrom(left, end));
+        }
+        return new AssignmentStmt(left, operator.image, right, spanFrom(left, end));
+    }
+}
+
+Token AssignmentOperator() :
+{
+    Token operator;
+}
+{
+    (
+        operator = <EQUAL>
+      | operator = <PLUS_EQUAL>
+      | operator = <MINUS_EQUAL>
+      | operator = <STAR_EQUAL>
+      | operator = <SLASH_EQUAL>
+      | operator = <PERCENT_EQUAL>
+    )
+    { return operator; }
+}
+
+Statement IfStatement() :
+{
+    Token start;
+    Expression condition;
+    Block thenBlock;
+    Statement elseBranch = null;
+    Token end;
+}
+{
+    start = <IF> <LPAREN> condition = Expression() <RPAREN>
+    thenBlock = Block()
+    [
+        <ELSE>
+        (
+            elseBranch = IfStatement()
+          | elseBranch = Block()
+        )
+    ]
+    {
+        end = getToken(0);
+        return new IfStmt(
+                condition,
+                thenBlock,
+                Optional.ofNullable(elseBranch),
+                span(start, end)
+        );
+    }
+}
+
+Statement WhileStatement() :
+{
+    Token start;
+    Expression condition;
+    Block body;
+}
+{
+    start = <WHILE> <LPAREN> condition = Expression() <RPAREN> body = Block()
+    { return new WhileStmt(condition, body, span(start, getToken(0))); }
+}
+
+Statement ForStatement() :
+{
+    Token start;
+    Token capture;
+    ForSource source;
+    Block body;
+}
+{
+    start = <FOR> <LPAREN> source = ForSource() <RPAREN>
+    <PIPE> capture = <IDENTIFIER> <PIPE>
+    body = Block()
+    { return new ForStmt(source, capture.image, body, span(start, getToken(0))); }
+}
+
+ForSource ForSource() :
+{
+    Expression first;
+    Expression second = null;
+}
+{
+    first = Expression()
+    [ <DOT_DOT> second = Expression() ]
+    {
+        if (second == null) {
+            return new IterableSource(first, first.span());
+        }
+        return new RangeSource(first, second, merge(first, second));
+    }
+}
+
+Statement SwitchStatement() :
+{
+    Token start;
+    Expression subject;
+    List<SwitchCase> cases = new ArrayList<>();
+    SwitchCase switchCase;
+    SwitchCase elseCase;
+    Token end;
+}
+{
+    start = <SWITCH> <LPAREN> subject = Expression() <RPAREN> <LBRACE>
+    (
+        switchCase = SwitchCase()
+        { cases.add(switchCase); }
+    )*
+    elseCase = ElseCase()
+    { cases.add(elseCase); }
+    end = <RBRACE>
+    { return new SwitchStmt(subject, cases, span(start, end)); }
+}
+
+SwitchCase SwitchCase() :
+{
+    List<Expression> labels = new ArrayList<>();
+    Expression label;
+    Block body;
+}
+{
+    label = CaseValue() { labels.add(label); }
+    (
+        <COMMA> label = CaseValue() { labels.add(label); }
+    )*
+    <ARROW> body = Block() <COMMA>
+    { return new SwitchCase(false, labels, body, merge(labels.get(0), body)); }
+}
+
+SwitchCase ElseCase() :
+{
+    Token start;
+    Block body;
+}
+{
+    start = <ELSE> <ARROW> body = Block() [ <COMMA> ]
+    { return new SwitchCase(true, List.of(), body, span(start, getToken(0))); }
+}
+
+Expression CaseValue() :
+{
+    Token minus = null;
+    Token token;
+    Expression value;
+}
+{
+      [ minus = <MINUS> ] token = <INTEGER>
+      {
+          value = new IntegerLiteral(token.image, span(token, token));
+          if (minus == null) return value;
+          return new UnaryExpr("-", value, span(minus, token));
+      }
+    | token = <CHAR_LITERAL>
+      { return new CharLiteral(token.image, span(token, token)); }
+    | token = <TRUE>
+      { return new BooleanLiteral(true, span(token, token)); }
+    | token = <FALSE>
+      { return new BooleanLiteral(false, span(token, token)); }
+}
+
+Statement ReturnStatement() :
+{
+    Token start;
+    Token end;
+    Expression value = null;
+}
+{
+    start = <RETURN> [ value = Expression() ] end = <SEMICOLON>
+    { return new ReturnStmt(Optional.ofNullable(value), span(start, end)); }
+}
+
+Statement BreakStatement() :
+{
+    Token start;
+    Token end;
+}
+{
+    start = <BREAK> end = <SEMICOLON>
+    { return new BreakStmt(span(start, end)); }
+}
+
+Statement ContinueStatement() :
+{
+    Token start;
+    Token end;
+}
+{
+    start = <CONTINUE> end = <SEMICOLON>
+    { return new ContinueStmt(span(start, end)); }
+}
+
+Expression Expression() :
+{
+    Expression expression;
+}
+{
+    expression = OrExpression() { return expression; }
+}
+
+Expression OrExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = AndExpression()
+    (
+        operator = <OR> right = AndExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    )*
+    { return left; }
+}
+
+Expression AndExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = EqualityExpression()
+    (
+        operator = <AND> right = EqualityExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    )*
+    { return left; }
+}
+
+Expression EqualityExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = ComparisonExpression()
+    (
+        (operator = <EQUAL_EQUAL> | operator = <NOT_EQUAL>)
+        right = ComparisonExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    )*
+    { return left; }
+}
+
+Expression ComparisonExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = AdditionExpression()
+    [
+        (
+            operator = <LESS>
+          | operator = <LESS_EQUAL>
+          | operator = <GREATER>
+          | operator = <GREATER_EQUAL>
+        )
+        right = AdditionExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    ]
+    { return left; }
+}
+
+Expression AdditionExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = MultiplicationExpression()
+    (
+        (operator = <PLUS> | operator = <MINUS>)
+        right = MultiplicationExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    )*
+    { return left; }
+}
+
+Expression MultiplicationExpression() :
+{
+    Expression left;
+    Expression right;
+    Token operator;
+}
+{
+    left = UnaryExpression()
+    (
+        (operator = <STAR> | operator = <SLASH> | operator = <PERCENT>)
+        right = UnaryExpression()
+        { left = new BinaryExpr(left, operator.image, right, merge(left, right)); }
+    )*
+    { return left; }
+}
+
+Expression UnaryExpression() :
+{
+    Token operator;
+    Expression operand;
+    Expression expression;
+}
+{
+      (operator = <NOT> | operator = <MINUS>) operand = UnaryExpression()
+      { return new UnaryExpr(operator.image, operand, spanFrom(operator, operand)); }
+    | expression = PostfixExpression()
+      { return expression; }
+}
+
+Expression PostfixExpression() :
+{
+    Expression expression;
+    Expression index;
+    List<Expression> arguments;
+    Token end;
+}
+{
+    expression = PrimaryExpression()
+    (
+          arguments = FunctionCall()
+          {
+              end = getToken(0);
+              expression = new CallExpr(expression, arguments, spanFrom(expression, end));
+          }
+        | <LBRACKET> index = Expression() end = <RBRACKET>
+          { expression = new IndexExpr(expression, index, spanFrom(expression, end)); }
+        | <DOT> end = <LEN>
+          { expression = new LengthExpr(expression, spanFrom(expression, end)); }
+    )*
+    { return expression; }
+}
+
+List<Expression> FunctionCall() :
+{
+    List<Expression> arguments = new ArrayList<>();
+}
+{
+    <LPAREN> [ ExpressionList(arguments) ] <RPAREN>
+    { return arguments; }
+}
+
+void ExpressionList(List<Expression> expressions) :
+{
+    Expression expression;
+}
+{
+    expression = Expression() { expressions.add(expression); }
+    (
+        <COMMA> expression = Expression() { expressions.add(expression); }
+    )*
+}
+
+Expression PrimaryExpression() :
+{
+    Token token;
+    Expression expression;
+}
+{
+      token = <INTEGER>
+      { return new IntegerLiteral(token.image, span(token, token)); }
+    | token = <FLOAT>
+      { return new FloatLiteral(token.image, span(token, token)); }
+    | token = <TRUE>
+      { return new BooleanLiteral(true, span(token, token)); }
+    | token = <FALSE>
+      { return new BooleanLiteral(false, span(token, token)); }
+    | token = <CHAR_LITERAL>
+      { return new CharLiteral(token.image, span(token, token)); }
+    | token = <IDENTIFIER>
+      { return new IdentifierExpr(token.image, span(token, token)); }
+    | token = <UNDERSCORE>
+      { return new IdentifierExpr(token.image, span(token, token)); }
+    | expression = ArrayLiteral()
+      { return expression; }
+    | <LPAREN> expression = Expression() <RPAREN>
+      { return expression; }
+}
+
+Expression ArrayLiteral() :
+{
+    Token start;
+    Token size = null;
+    TypeNode elementType;
+    List<Expression> elements = new ArrayList<>();
+    Token end;
+}
+{
+    start = <LBRACKET>
+    ( size = <INTEGER> | size = <UNDERSCORE> )
+    <RBRACKET>
+    elementType = Type()
+    <LBRACE>
+    [ ExpressionList(elements) ]
+    end = <RBRACE>
+    {
+        Optional<Integer> explicitSize = size.kind == UNDERSCORE
+                ? Optional.empty()
+                : Optional.of(Integer.parseInt(size.image));
+        return new ArrayLiteral(explicitSize, elementType, elements, span(start, end));
+    }
+}
