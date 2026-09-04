@@ -53,6 +53,8 @@ La precedencia implementada, de mayor a menor, es: postfix, unarios, multiplicac
 - escapes de carácter `\n`, `\r`, `\t`, `\\` y `\'`;
 - posición inicial y final de cada token.
 
+Un carácter Unicode no admitido que aparezca dentro de una secuencia continua de identificador invalida la secuencia completa. Así, `niño` produce una fila `ERROR_LEXICO` para `niño`, con su intervalo completo, en lugar de separar `ni`, `ñ` y `o`. Un símbolo inválido aislado se registra como su propio elemento de error.
+
 ## Elementos excluidos
 
 - `comptime`, punteros, slices y sentinel arrays;

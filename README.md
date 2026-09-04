@@ -20,12 +20,14 @@ La ventana incluye:
 
 - editor de código con números de línea, conteo de líneas y posición del cursor;
 - apertura de archivos `.zig` y `.txt`, guardado y guardado como;
-- tabla del análisis léxico con tipo, lexema y posición de cada token;
+- tabla del análisis léxico con lexema, tipo y posición inicial/final de cada token;
 - tabla secuencial del análisis sintáctico, con construcciones del AST, detalle y ubicación;
 - paneles independientes para errores léxicos y sintácticos;
 - diagnósticos con lo esperado, lo encontrado, línea, columna y fragmento señalado.
 - recuperación léxica para informar varios caracteres inválidos en una misma ejecución;
 - indicador verde/rojo y alerta final con el resultado de cada análisis manual.
+
+Los elementos inválidos también aparecen en la tabla con tipo `ERROR_LEXICO` y fondo rojo. Si un carácter Unicode no admitido forma parte de una secuencia de identificador —por ejemplo `niño`— se informa la secuencia completa como un solo lexema inválido.
 
 Al iniciar, la aplicación carga una copia sin asociar a archivo del ejemplo completo de más de 350 líneas y lo analiza automáticamente. Esto permite revisar de inmediato las dos tablas; para modificar el archivo de ejemplo original debe abrirse explícitamente desde `examples/`.
 

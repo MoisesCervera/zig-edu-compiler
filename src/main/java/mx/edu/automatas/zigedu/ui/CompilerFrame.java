@@ -30,9 +30,11 @@ import javax.swing.WindowConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Insets;
@@ -81,7 +83,7 @@ public final class CompilerFrame extends JFrame {
 
     private final JTextArea sourceEditor = new JTextArea();
     private final DefaultTableModel tokenModel = new DefaultTableModel(
-            new String[]{"#", "Tipo", "Lexema", "Inicio", "Fin"}, 0) {
+            new String[]{"Lexema", "Tipo", "Inicio", "Fin"}, 0) {
         @Override
         public boolean isCellEditable(int row, int column) {
             return false;
@@ -182,6 +184,23 @@ public final class CompilerFrame extends JFrame {
         tokenTable.setAutoCreateRowSorter(true);
         tokenTable.setFillsViewportHeight(true);
         tokenTable.getTableHeader().setReorderingAllowed(false);
+        tokenTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean selected, boolean focused, int row, int column
+            ) {
+                Component component = super.getTableCellRendererComponent(
+                        table, value, selected, focused, row, column);
+                int modelRow = table.convertRowIndexToModel(row);
+                boolean lexicalError = "ERROR_LEXICO".equals(table.getModel().getValueAt(modelRow, 1));
+                if (!selected) {
+                    component.setBackground(lexicalError ? new Color(255, 226, 226) : Color.WHITE);
+                    component.setForeground(lexicalError ? new Color(150, 25, 25) : new Color(35, 40, 50));
+                }
+                setFont(lexicalError ? CODE_FONT.deriveFont(Font.BOLD, 12f) : CODE_FONT.deriveFont(12f));
+                return component;
+            }
+        });
 
         syntaxTable.setFont(CODE_FONT.deriveFont(12f));
         syntaxTable.setRowHeight(24);
@@ -357,7 +376,7 @@ public final class CompilerFrame extends JFrame {
         tokenModel.setRowCount(0);
         for (TokenInfo token : tokens) {
             tokenModel.addRow(new Object[]{
-                    token.number(), token.type(), printable(token.lexeme()),
+                    printable(token.lexeme()), token.type(),
                     token.line() + ":" + token.column(), token.endLine() + ":" + token.endColumn()
             });
         }

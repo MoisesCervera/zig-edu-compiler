@@ -86,25 +86,82 @@ public final class SourceAnalyzer {
                 return;
             } catch (TokenMgrError error) {
                 Diagnostic local = toLexicalDiagnostic(error, segment);
-                Diagnostic global = new Diagnostic(
-                        local.phase(),
-                        local.summary(),
-                        globalLine(base, local.line()),
-                        globalColumn(base, local.line(), local.column()),
-                        local.expected(),
-                        local.found(),
-                        sourceLine(source, globalLine(base, local.line()))
-                );
-                lexicalErrors.add(global);
-
                 int errorOffset = offsetAtLineAndColumn(segment, local.line(), local.column());
                 if (errorOffset < 0 || errorOffset >= segment.length()) {
                     return;
                 }
-                int invalidCodePoint = segment.codePointAt(errorOffset);
-                segmentOffset += errorOffset + Character.charCount(invalidCodePoint);
+
+                int absoluteErrorOffset = segmentOffset + errorOffset;
+                InvalidLexeme invalid = invalidLexemeAt(source, absoluteErrorOffset);
+                SourcePosition invalidStart = positionAtOffset(source, invalid.startOffset());
+                SourcePosition invalidEnd = positionAtOffset(source, invalid.lastCharacterOffset());
+                int removedTokens = removeTokensInside(tokens, source, invalid.startOffset(), invalid.endOffset());
+                number -= removedTokens;
+
+                String offendingCharacter = new String(Character.toChars(source.codePointAt(absoluteErrorOffset)));
+                Diagnostic global = new Diagnostic(
+                        local.phase(),
+                        "El lexema completo es inválido porque contiene un carácter no permitido.",
+                        invalidStart.line(),
+                        invalidStart.column(),
+                        local.expected(),
+                        "'" + escape(invalid.text()) + "' (carácter causante: '"
+                                + escape(offendingCharacter) + "')",
+                        sourceLine(source, invalidStart.line())
+                );
+                lexicalErrors.add(global);
+                tokens.add(new TokenInfo(
+                        number++,
+                        invalid.text(),
+                        "ERROR_LEXICO",
+                        invalidStart.line(),
+                        invalidStart.column(),
+                        invalidEnd.line(),
+                        invalidEnd.column()
+                ));
+                segmentOffset = invalid.endOffset();
             }
         }
+    }
+
+    private InvalidLexeme invalidLexemeAt(String source, int errorOffset) {
+        int invalidCodePoint = source.codePointAt(errorOffset);
+        int start = errorOffset;
+        int end = errorOffset + Character.charCount(invalidCodePoint);
+
+        if (Character.isUnicodeIdentifierPart(invalidCodePoint)) {
+            while (start > 0) {
+                int previous = source.codePointBefore(start);
+                if (!Character.isUnicodeIdentifierPart(previous)) {
+                    break;
+                }
+                start -= Character.charCount(previous);
+            }
+            while (end < source.length()) {
+                int next = source.codePointAt(end);
+                if (!Character.isUnicodeIdentifierPart(next)) {
+                    break;
+                }
+                end += Character.charCount(next);
+            }
+        }
+
+        int lastCharacterOffset = end - Character.charCount(source.codePointBefore(end));
+        return new InvalidLexeme(start, end, lastCharacterOffset, source.substring(start, end));
+    }
+
+    private int removeTokensInside(List<TokenInfo> tokens, String source, int startOffset, int endOffset) {
+        int removed = 0;
+        while (!tokens.isEmpty()) {
+            TokenInfo last = tokens.getLast();
+            int tokenStart = offsetAtLineAndColumn(source, last.line(), last.column());
+            if (tokenStart < startOffset || tokenStart >= endOffset) {
+                break;
+            }
+            tokens.removeLast();
+            removed++;
+        }
+        return removed;
     }
 
     private int globalLine(SourcePosition base, int localLine) {
@@ -257,5 +314,8 @@ public final class SourceAnalyzer {
     }
 
     private record SourcePosition(int line, int column) {
+    }
+
+    private record InvalidLexeme(int startOffset, int endOffset, int lastCharacterOffset, String text) {
     }
 }

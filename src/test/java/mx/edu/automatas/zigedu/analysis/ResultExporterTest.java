@@ -30,5 +30,8 @@ class ResultExporterTest {
         assertTrue(Files.exists(temporaryDirectory.resolve("errores_lexicos.txt")));
         assertTrue(Files.exists(temporaryDirectory.resolve("tokens.txt")));
         assertTrue(Files.exists(temporaryDirectory.resolve("ast.txt")));
+        String tokenReport = Files.readString(temporaryDirectory.resolve("tokens.txt"));
+        assertTrue(tokenReport.startsWith("LEXEMA"));
+        assertFalse(tokenReport.lines().findFirst().orElseThrow().contains("#"));
     }
 }

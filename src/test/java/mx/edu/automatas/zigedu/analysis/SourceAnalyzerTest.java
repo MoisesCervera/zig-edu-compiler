@@ -97,6 +97,35 @@ class SourceAnalyzerTest {
     }
 
     @Test
+    void reportsAnEntireIdentifierWhenEnyeAppearsInsideIt() {
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const niño = 1;
+                    const valid = 2;
+                }
+                """);
+
+        assertEquals(1, result.lexicalErrors().size());
+        Diagnostic diagnostic = result.lexicalErrors().getFirst();
+        assertEquals(2, diagnostic.line());
+        assertEquals(11, diagnostic.column());
+        assertTrue(diagnostic.found().contains("niño"));
+
+        TokenInfo invalid = result.tokens().stream()
+                .filter(token -> token.type().equals("ERROR_LEXICO"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("niño", invalid.lexeme());
+        assertEquals(2, invalid.line());
+        assertEquals(11, invalid.column());
+        assertEquals(2, invalid.endLine());
+        assertEquals(14, invalid.endColumn());
+        assertFalse(result.tokens().stream().anyMatch(token -> token.lexeme().equals("ni")));
+        assertFalse(result.tokens().stream().anyMatch(token -> token.lexeme().equals("o")));
+        assertTrue(result.tokens().stream().anyMatch(token -> token.lexeme().equals("valid")));
+    }
+
+    @Test
     void reportsExpectedAndFoundTokensForSyntaxErrors() {
         AnalysisResult result = analyzer.analyze("""
                 pub fn main() void {

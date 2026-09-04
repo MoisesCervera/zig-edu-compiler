@@ -46,13 +46,12 @@ public final class ResultExporter {
 
     private String tokensText(List<TokenInfo> tokens) {
         StringBuilder text = new StringBuilder();
-        text.append(String.format("%-6s %-22s %-28s %-10s %-10s%n",
-                "#", "TIPO", "LEXEMA", "INICIO", "FIN"));
+        text.append(String.format("%-28s %-22s %-10s %-10s%n",
+                "LEXEMA", "TIPO", "INICIO", "FIN"));
         for (TokenInfo token : tokens) {
-            text.append(String.format("%-6d %-22s %-28s %-10s %-10s%n",
-                    token.number(),
-                    token.type(),
+            text.append(String.format("%-28s %-22s %-10s %-10s%n",
                     printable(token.lexeme()),
+                    token.type(),
                     token.line() + ":" + token.column(),
                     token.endLine() + ":" + token.endColumn()));
         }
