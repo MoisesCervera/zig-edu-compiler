@@ -72,7 +72,7 @@ Un carácter Unicode no admitido que aparezca dentro de una secuencia continua d
 - No se admiten comas finales en parámetros, argumentos o literales de arreglo.
 - Los tipos de arreglo requieren un tamaño entero literal; `[_]T` sólo se usa al construir un arreglo.
 - La gramática puede aceptar operaciones que posteriormente serán inválidas por tipo. Por ejemplo, Zig 0.16 requiere `@divTrunc` o una variante equivalente para dividir `i32`; detectar eso corresponde al futuro análisis semántico. El ejemplo común utiliza `/` y `%` únicamente con tipos para los que Zig real los permite.
-- La pasada léxica se recupera después de un carácter inválido y continúa para reunir varios errores en una ejecución. La pasada sintáctica se omite si hubo errores léxicos; cuando sí se ejecuta, intenta reanudar en el siguiente `;` o `}` para reunir varios errores independientes sin producir cascadas innecesarias.
+- La pasada léxica se recupera después de un carácter inválido y continúa para reunir varios errores en una ejecución. La pasada sintáctica se omite si hubo errores léxicos; cuando sí se ejecuta, intenta reanudar en el siguiente `;`, `}` o en la siguiente declaración `fn` de nivel superior para reunir varios errores independientes sin producir cascadas innecesarias.
 
 ## Texto sin strings
 

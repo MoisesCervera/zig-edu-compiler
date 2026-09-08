@@ -213,6 +213,31 @@ public final class CompilerFrame extends JFrame {
         syntaxTable.setFillsViewportHeight(true);
         syntaxTable.setAutoCreateRowSorter(false);
         syntaxTable.getTableHeader().setReorderingAllowed(false);
+        syntaxTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean selected, boolean focused, int row, int column
+            ) {
+                Component component = super.getTableCellRendererComponent(
+                        table, value, selected, focused, row, column);
+                int modelRow = table.convertRowIndexToModel(row);
+                Object construction = table.getModel().getValueAt(modelRow, 1);
+                boolean syntaxError = "Error sintáctico".equals(construction);
+                boolean notExecuted = "Análisis no ejecutado".equals(construction);
+                if (!selected) {
+                    component.setBackground(syntaxError
+                            ? new Color(255, 226, 226)
+                            : notExecuted ? new Color(244, 244, 246) : Color.WHITE);
+                    component.setForeground(syntaxError
+                            ? new Color(150, 25, 25)
+                            : notExecuted ? new Color(92, 99, 117) : new Color(35, 40, 50));
+                }
+                setFont(syntaxError
+                        ? CODE_FONT.deriveFont(Font.BOLD, 12f)
+                        : CODE_FONT.deriveFont(12f));
+                return component;
+            }
+        });
 
         JTabbedPane results = new JTabbedPane();
         results.addTab("Análisis léxico", new JScrollPane(tokenTable));
@@ -340,17 +365,7 @@ public final class CompilerFrame extends JFrame {
 
     private void applyAnalysisResult(AnalysisResult result, boolean showAlert) {
         updateTokens(result.tokens());
-        syntaxModel.setRowCount(0);
-        result.program().ifPresent(program -> {
-            for (AstFormatter.AstEntry entry : AstFormatter.flatten(program)) {
-                syntaxModel.addRow(new Object[]{
-                        entry.number(),
-                        "  ".repeat(entry.depth()) + entry.construction(),
-                        entry.detail(),
-                        entry.location()
-                });
-            }
-        });
+        updateSyntaxAnalysis(result);
         lexicalErrors.setText(diagnostics(result.lexicalErrors(), "Sin errores léxicos."));
         syntacticErrors.setText(result.lexicalErrors().isEmpty()
                 ? diagnostics(result.syntacticErrors(), "Sin errores sintácticos.")
@@ -432,6 +447,61 @@ public final class CompilerFrame extends JFrame {
                     token.line() + ":" + token.column(), token.endLine() + ":" + token.endColumn()
             });
         }
+    }
+
+    private void updateSyntaxAnalysis(AnalysisResult result) {
+        syntaxModel.setRowCount(0);
+        if (!result.lexicalErrors().isEmpty()) {
+            syntaxModel.addRow(new Object[]{
+                    1,
+                    "Análisis no ejecutado",
+                    "Corrige primero los errores léxicos indicados en el panel inferior.",
+                    "—"
+            });
+            return;
+        }
+
+        List<AstFormatter.AstEntry> entries = result.program()
+                .map(AstFormatter::flatten)
+                .orElseGet(List::of);
+        List<Diagnostic> errors = result.syntacticErrors();
+        int errorIndex = 0;
+        int rowNumber = 1;
+
+        for (int entryIndex = 0; entryIndex < entries.size(); entryIndex++) {
+            AstFormatter.AstEntry entry = entries.get(entryIndex);
+            boolean programRoot = entryIndex == 0 && entry.depth() == 0;
+            if (!programRoot) {
+                while (errorIndex < errors.size()
+                        && comesBefore(errors.get(errorIndex), entry.line(), entry.column())) {
+                    addSyntaxErrorRow(rowNumber++, errors.get(errorIndex++));
+                }
+            }
+            syntaxModel.addRow(new Object[]{
+                    rowNumber++,
+                    "  ".repeat(entry.depth()) + entry.construction(),
+                    entry.detail(),
+                    entry.location()
+            });
+        }
+        while (errorIndex < errors.size()) {
+            addSyntaxErrorRow(rowNumber++, errors.get(errorIndex++));
+        }
+    }
+
+    private boolean comesBefore(Diagnostic diagnostic, int line, int column) {
+        return diagnostic.line() < line
+                || diagnostic.line() == line && diagnostic.column() <= column;
+    }
+
+    private void addSyntaxErrorRow(int rowNumber, Diagnostic diagnostic) {
+        syntaxModel.addRow(new Object[]{
+                rowNumber,
+                "Error sintáctico",
+                "Se esperaba: " + diagnostic.expected()
+                        + " · Se encontró: " + diagnostic.found(),
+                diagnostic.line() + ":" + diagnostic.column()
+        });
     }
 
     private void moveCaretTo(Diagnostic diagnostic) {

@@ -21,7 +21,7 @@ La ventana incluye:
 - editor de código con números de línea, conteo de líneas y posición del cursor;
 - apertura de archivos `.zig` y `.txt`, guardado y guardado como;
 - tabla del análisis léxico con lexema, tipo y posición inicial/final de cada token;
-- tabla secuencial del análisis sintáctico, con construcciones del AST, detalle y ubicación;
+- tabla secuencial del análisis sintáctico, con construcciones del AST, detalle y ubicación; ante errores conserva el proceso parcial e intercala filas rojas con lo esperado y lo encontrado;
 - paneles independientes para errores léxicos y sintácticos;
 - diagnósticos con lo esperado, lo encontrado, línea, columna y fragmento señalado.
 - recuperación léxica y sintáctica para informar varios errores independientes en una misma ejecución;

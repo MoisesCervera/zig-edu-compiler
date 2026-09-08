@@ -16,6 +16,15 @@ class SourceAnalyzerTest {
     private final SourceAnalyzer analyzer = new SourceAnalyzer();
 
     @Test
+    void rejectsAnEmptyProgram() {
+        AnalysisResult result = analyzer.analyze("");
+
+        assertFalse(result.successful());
+        assertEquals(1, result.syntacticErrors().size());
+        assertTrue(result.syntacticErrors().getFirst().expected().contains("fn"));
+    }
+
+    @Test
     void acceptsFunctionsExpressionsControlFlowArraysAndCalls() {
         String source = """
                 fn choose(value: i32) i32 {
@@ -170,6 +179,49 @@ class SourceAnalyzerTest {
         assertEquals(2, result.syntacticErrors().size(), result.syntacticErrors()::toString);
         assertEquals(List.of(2, 4), result.syntacticErrors().stream().map(Diagnostic::line).toList());
         assertTrue(result.program().isPresent(), "Debe conservarse el AST parcial recuperado");
+    }
+
+    @Test
+    void reportsMissingParenthesesInSeparateTopLevelFunctions() {
+        AnalysisResult result = analyzer.analyze("""
+                fn add(left: i32, right: i32) i32 { return left + right; }
+                fn divide left: u8, right: u8) u8 { return left / right; }
+                fn remainder left: u8, right: u8) u8 { return left % right; }
+                fn valid(value: i32) i32 { return value; }
+                """);
+
+        assertFalse(result.successful());
+        assertEquals(2, result.syntacticErrors().size(), result.syntacticErrors()::toString);
+        assertEquals(List.of(2, 3), result.syntacticErrors().stream().map(Diagnostic::line).toList());
+        assertTrue(result.syntacticErrors().stream()
+                .allMatch(error -> error.expected().contains("(")));
+        assertEquals(List.of("add", "valid"), result.program().orElseThrow().functions().stream()
+                .map(Ast.FunctionDecl::name)
+                .toList());
+    }
+
+    @Test
+    void keepsAnEarlierStatementErrorWhenALaterFunctionHeaderIsInvalid() {
+        AnalysisResult result = analyzer.analyze("""
+                fn add(left: i32, right: i32) i32 { return left + right; }
+                fn subtract(left: i32, right: i32) i32 {
+                    return left right;
+                }
+                fn multiply left: i32, right: i32) i32 {
+                    return left * right;
+                }
+                fn divide(left: u8, right: u8) u8 { return left / right; }
+                """);
+
+        assertFalse(result.successful());
+        assertEquals(2, result.syntacticErrors().size(), result.syntacticErrors()::toString);
+        assertEquals(List.of(3, 5), result.syntacticErrors().stream().map(Diagnostic::line).toList());
+        assertTrue(result.syntacticErrors().getFirst().found().contains("right"));
+        assertTrue(result.syntacticErrors().get(1).expected().contains("("));
+        assertEquals(List.of("add", "subtract", "divide"),
+                result.program().orElseThrow().functions().stream()
+                        .map(Ast.FunctionDecl::name)
+                        .toList());
     }
 
     @Test

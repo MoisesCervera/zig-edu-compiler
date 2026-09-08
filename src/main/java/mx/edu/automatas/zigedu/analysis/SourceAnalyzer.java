@@ -45,6 +45,9 @@ public final class SourceAnalyzer {
                     .toList());
             return new AnalysisResult(tokens, Optional.of(program), lexicalErrors, syntacticErrors);
         } catch (ParseException error) {
+            syntacticErrors.addAll(parser.getRecoveredErrors().stream()
+                    .map(recovered -> toSyntacticDiagnostic(recovered, safeSource))
+                    .toList());
             syntacticErrors.add(toSyntacticDiagnostic(error, safeSource));
         } catch (TokenMgrError error) {
             lexicalErrors.add(toLexicalDiagnostic(error, safeSource));

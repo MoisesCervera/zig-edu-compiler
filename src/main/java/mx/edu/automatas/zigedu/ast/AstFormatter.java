@@ -28,6 +28,8 @@ public final class AstFormatter {
                 depth,
                 displayName(node),
                 detail(node),
+                node.span().line(),
+                node.span().column(),
                 node.span().line() + ":" + node.span().column()
                         + " – " + node.span().endLine() + ":" + node.span().endColumn()
         ));
@@ -100,7 +102,15 @@ public final class AstFormatter {
         return "";
     }
 
-    public record AstEntry(int number, int depth, String construction, String detail, String location) {
+    public record AstEntry(
+            int number,
+            int depth,
+            String construction,
+            String detail,
+            int line,
+            int column,
+            String location
+    ) {
     }
 
     private static void appendText(Ast.Node node, StringBuilder output, int depth) {

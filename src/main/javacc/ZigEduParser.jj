@@ -37,6 +37,31 @@ public class ZigEduParser {
         }
     }
 
+    private void recoverTopLevelDeclaration() {
+        int braceDepth = 0;
+        boolean enteredBody = false;
+        while (true) {
+            int nextKind = getToken(1).kind;
+            if (nextKind == EOF) {
+                return;
+            }
+            if (!enteredBody && (nextKind == PUB || nextKind == FN)) {
+                return;
+            }
+
+            getNextToken();
+            if (nextKind == LBRACE) {
+                enteredBody = true;
+                braceDepth++;
+            } else if (nextKind == RBRACE && enteredBody) {
+                braceDepth--;
+                if (braceDepth <= 0) {
+                    return;
+                }
+            }
+        }
+    }
+
     private SourceSpan span(Token start, Token end) {
         return new SourceSpan(
                 start.beginLine,
@@ -171,19 +196,36 @@ Program ParseProgram() :
     SourceSpan programSpan;
 }
 {
-    (
+    try {
         function = FunctionDeclaration()
         { functions.add(function); }
-    )+
+    } catch (ParseException error) {
+        recoveredErrors.add(error);
+        recoverTopLevelDeclaration();
+    }
+    (
+        LOOKAHEAD({ getToken(1).kind != EOF })
+        try {
+            function = FunctionDeclaration()
+            { functions.add(function); }
+        } catch (ParseException error) {
+            recoveredErrors.add(error);
+            recoverTopLevelDeclaration();
+        }
+    )*
     eof = <EOF>
     {
-        FunctionDecl first = functions.get(0);
-        programSpan = new SourceSpan(
-                first.span().line(),
-                first.span().column(),
-                eof.endLine,
-                eof.endColumn
-        );
+        if (functions.isEmpty()) {
+            programSpan = new SourceSpan(1, 1, Math.max(eof.endLine, 1), Math.max(eof.endColumn, 1));
+        } else {
+            FunctionDecl first = functions.get(0);
+            programSpan = new SourceSpan(
+                    first.span().line(),
+                    first.span().column(),
+                    eof.endLine,
+                    eof.endColumn
+            );
+        }
         return new Program(functions, programSpan);
     }
 }
