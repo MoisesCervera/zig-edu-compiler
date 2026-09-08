@@ -63,16 +63,16 @@ Un carácter Unicode no admitido que aparezca dentro de una secuencia continua d
 - optionals, error unions, `try`, `catch` y `defer`;
 - imports, builtins como `@divTrunc`, acceso a bibliotecas y E/S;
 - genéricos, reflexión, ensamblador y concurrencia;
-- literales hexadecimales/binarios y separadores `_` en números.
+- literales hexadecimales/binarios y separadores `_` en números; si aparecen, se informan como un lexema numérico completo inválido.
 
 ## Simplificaciones respecto de Zig
 
 - `switch` se modela como sentencia y cada brazo debe ser un bloque.
-- Cada `for` tiene una sola captura y no admite captura de índice simultánea.
+- Cada `for` tiene una sola captura, que puede ser un identificador o `_`, y no admite captura de índice simultánea.
 - No se admiten comas finales en parámetros, argumentos o literales de arreglo.
 - Los tipos de arreglo requieren un tamaño entero literal; `[_]T` sólo se usa al construir un arreglo.
 - La gramática puede aceptar operaciones que posteriormente serán inválidas por tipo. Por ejemplo, Zig 0.16 requiere `@divTrunc` o una variante equivalente para dividir `i32`; detectar eso corresponde al futuro análisis semántico. El ejemplo común utiliza `/` y `%` únicamente con tipos para los que Zig real los permite.
-- La pasada léxica se recupera después de un carácter inválido y continúa para reunir varios errores en una ejecución. La pasada sintáctica se omite si hubo errores léxicos; cuando sí se ejecuta, se detiene en el primer punto donde JavaCC ya no puede continuar con seguridad.
+- La pasada léxica se recupera después de un carácter inválido y continúa para reunir varios errores en una ejecución. La pasada sintáctica se omite si hubo errores léxicos; cuando sí se ejecuta, intenta reanudar en el siguiente `;` o `}` para reunir varios errores independientes sin producir cascadas innecesarias.
 
 ## Texto sin strings
 

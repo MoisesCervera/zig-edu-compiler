@@ -1,6 +1,7 @@
 options {
     STATIC = false;
-    LOOKAHEAD = 2;
+    LOOKAHEAD = 1;
+    FORCE_LA_CHECK = true;
     UNICODE_INPUT = true;
     KEEP_LINE_COLUMN = true;
 }
@@ -17,6 +18,25 @@ import java.util.List;
 import java.util.Optional;
 
 public class ZigEduParser {
+    private final List<ParseException> recoveredErrors = new ArrayList<>();
+
+    public List<ParseException> getRecoveredErrors() {
+        return List.copyOf(recoveredErrors);
+    }
+
+    private void recoverStatement() {
+        while (true) {
+            int nextKind = getToken(1).kind;
+            if (nextKind == EOF || nextKind == RBRACE) {
+                return;
+            }
+            getNextToken();
+            if (nextKind == SEMICOLON) {
+                return;
+            }
+        }
+    }
+
     private SourceSpan span(Token start, Token end) {
         return new SourceSpan(
                 start.beginLine,
@@ -123,6 +143,10 @@ TOKEN : {
 TOKEN : {
     < #DIGIT: ["0"-"9"] >
 |   < #EXPONENT: ["e", "E"] (["+", "-"])? (<DIGIT>)+ >
+|   < MALFORMED_NUMBER:
+          "0" ["x", "X", "b", "B", "o", "O"] (["A"-"Z", "a"-"z", "0"-"9", "_"])+
+        | (<DIGIT>)+ "_" (["A"-"Z", "a"-"z", "0"-"9", "_"])*
+    >
 |   < FLOAT:
           (<DIGIT>)+ "." (<DIGIT>)+ (<EXPONENT>)?
         | (<DIGIT>)+ <EXPONENT>
@@ -177,7 +201,7 @@ FunctionDecl FunctionDeclaration() :
 {
     [ pub = <PUB> ]
     fn = <FN>
-    name = <IDENTIFIER>
+    name = IdentifierToken()
     <LPAREN>
     [ ParameterList(parameters) ]
     <RPAREN>
@@ -214,7 +238,7 @@ Parameter Parameter() :
     TypeNode type;
 }
 {
-    name = <IDENTIFIER> <COLON> type = Type()
+    name = IdentifierToken() <COLON> type = Type()
     { return new Parameter(name.image, type, span(name, getToken(0))); }
 }
 
@@ -238,7 +262,7 @@ TypeNode Type() :
       start = <LBRACKET> size = <INTEGER> <RBRACKET> elementType = Type()
       {
           return new ArrayType(
-                  Integer.parseInt(size.image),
+                  size.image,
                   elementType,
                   span(start, getToken(0))
           );
@@ -255,8 +279,14 @@ Block Block() :
 {
     start = <LBRACE>
     (
-        statement = Statement()
-        { statements.add(statement); }
+        LOOKAHEAD({ getToken(1).kind != RBRACE && getToken(1).kind != EOF })
+        try {
+            statement = Statement()
+            { statements.add(statement); }
+        } catch (ParseException error) {
+            recoveredErrors.add(error);
+            recoverStatement();
+        }
     )*
     end = <RBRACE>
     { return new Block(statements, span(start, end)); }
@@ -289,7 +319,7 @@ Statement VariableDeclaration() :
 }
 {
     ( kind = <CONST> | kind = <VAR> )
-    name = <IDENTIFIER>
+    name = IdentifierToken()
     [ <COLON> type = Type() ]
     <EQUAL>
     initializer = Expression()
@@ -389,7 +419,7 @@ Statement ForStatement() :
 }
 {
     start = <FOR> <LPAREN> source = ForSource() <RPAREN>
-    <PIPE> capture = <IDENTIFIER> <PIPE>
+    <PIPE> ( capture = IdentifierToken() | capture = <UNDERSCORE> ) <PIPE>
     body = Block()
     { return new ForStmt(source, capture.image, body, span(start, getToken(0))); }
 }
@@ -687,7 +717,7 @@ Expression PrimaryExpression() :
       { return new BooleanLiteral(false, span(token, token)); }
     | token = <CHAR_LITERAL>
       { return new CharLiteral(token.image, span(token, token)); }
-    | token = <IDENTIFIER>
+    | token = IdentifierToken()
       { return new IdentifierExpr(token.image, span(token, token)); }
     | token = <UNDERSCORE>
       { return new IdentifierExpr(token.image, span(token, token)); }
@@ -714,9 +744,18 @@ Expression ArrayLiteral() :
     [ ExpressionList(elements) ]
     end = <RBRACE>
     {
-        Optional<Integer> explicitSize = size.kind == UNDERSCORE
+        Optional<String> explicitSize = size.kind == UNDERSCORE
                 ? Optional.empty()
-                : Optional.of(Integer.parseInt(size.image));
+                : Optional.of(size.image);
         return new ArrayLiteral(explicitSize, elementType, elements, span(start, end));
     }
+}
+
+Token IdentifierToken() :
+{
+    Token token;
+}
+{
+    ( token = <IDENTIFIER> | token = <LEN> )
+    { return token; }
 }

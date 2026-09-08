@@ -34,4 +34,20 @@ class ResultExporterTest {
         assertTrue(tokenReport.startsWith("LEXEMA"));
         assertFalse(tokenReport.lines().findFirst().orElseThrow().contains("#"));
     }
+
+    @Test
+    void exportsTheExplicitArrayLiteralSizeInTheAstReport() throws Exception {
+        ResultExporter exporter = new ResultExporter(temporaryDirectory);
+        AnalysisResult result = new SourceAnalyzer().analyze("""
+                pub fn main() void {
+                    const values = [3]i32{ 1, 2, 3 };
+                    _ = values;
+                }
+                """);
+
+        exporter.overwrite(result);
+
+        String ast = Files.readString(temporaryDirectory.resolve("ast.txt"));
+        assertTrue(ast.contains("explicitSize=3"), ast);
+    }
 }

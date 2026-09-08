@@ -8,7 +8,10 @@ import mx.edu.automatas.zigedu.parser.ZigEduParser;
 import mx.edu.automatas.zigedu.parser.ZigEduParserConstants;
 
 import java.io.StringReader;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -17,17 +20,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class SourceAnalyzer {
-    private static final String[] TOKEN_NAMES = {
-            "EOF", "WHITESPACE", "LINE_COMMENT", "PUB", "FN", "CONST", "VAR", "IF", "ELSE",
-            "WHILE", "FOR", "SWITCH", "RETURN", "BREAK", "CONTINUE", "AND", "OR", "TRUE",
-            "FALSE", "TYPE_I32", "TYPE_F64", "TYPE_U8", "TYPE_BOOL", "TYPE_VOID", "LEN",
-            "PLUS_EQUAL", "MINUS_EQUAL", "STAR_EQUAL", "SLASH_EQUAL", "PERCENT_EQUAL",
-            "EQUAL_EQUAL", "NOT_EQUAL", "LESS_EQUAL", "GREATER_EQUAL", "DOT_DOT", "ARROW",
-            "EQUAL", "PLUS", "MINUS", "STAR", "SLASH", "PERCENT", "NOT", "LESS", "GREATER",
-            "LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACKET", "RBRACKET", "COMMA", "COLON",
-            "SEMICOLON", "DOT", "PIPE", "UNDERSCORE", "DIGIT", "EXPONENT", "FLOAT", "INTEGER",
-            "CHAR_LITERAL", "IDENTIFIER"
-    };
+    private static final String[] TOKEN_NAMES = buildTokenNames();
     private static final Pattern LEXICAL_POSITION = Pattern.compile(
             "line\\s+(\\d+),\\s+column\\s+(\\d+).*?Encountered:\\s*(.*)",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL
@@ -45,9 +38,11 @@ public final class SourceAnalyzer {
         }
 
         ZigEduParser parser = new ZigEduParser(new StringReader(safeSource));
-        parser.ReInit(new StringReader(safeSource));
         try {
             Ast.Program program = parser.ParseProgram();
+            syntacticErrors.addAll(parser.getRecoveredErrors().stream()
+                    .map(error -> toSyntacticDiagnostic(error, safeSource))
+                    .toList());
             return new AnalysisResult(tokens, Optional.of(program), lexicalErrors, syntacticErrors);
         } catch (ParseException error) {
             syntacticErrors.add(toSyntacticDiagnostic(error, safeSource));
@@ -73,38 +68,59 @@ public final class SourceAnalyzer {
                 Token token;
                 do {
                     token = parser.getNextToken();
+                    boolean malformedNumber = token.kind == ZigEduParserConstants.MALFORMED_NUMBER;
                     tokens.add(new TokenInfo(
                             number++,
                             token.kind == ZigEduParserConstants.EOF ? "<EOF>" : token.image,
-                            tokenName(token.kind),
+                            malformedNumber ? "ERROR_LEXICO" : tokenName(token.kind),
                             globalLine(base, token.beginLine),
                             globalColumn(base, token.beginLine, token.beginColumn),
                             globalLine(base, token.endLine),
                             globalColumn(base, token.endLine, token.endColumn)
                     ));
+                    if (malformedNumber) {
+                        lexicalErrors.add(new Diagnostic(
+                                Diagnostic.Phase.LEXICAL,
+                                "El formato del literal numérico no pertenece al subconjunto soportado.",
+                                globalLine(base, token.beginLine),
+                                globalColumn(base, token.beginLine, token.beginColumn),
+                                "Un entero decimal sin separadores o un decimal con punto o exponente",
+                                "'" + escape(token.image) + "'",
+                                sourceLine(source, globalLine(base, token.beginLine))
+                        ));
+                    }
                 } while (token.kind != ZigEduParserConstants.EOF);
                 return;
             } catch (TokenMgrError error) {
                 Diagnostic local = toLexicalDiagnostic(error, segment);
                 int errorOffset = offsetAtLineAndColumn(segment, local.line(), local.column());
-                if (errorOffset < 0 || errorOffset >= segment.length()) {
+                if (errorOffset < 0 || errorOffset > segment.length()) {
                     return;
                 }
 
                 int absoluteErrorOffset = segmentOffset + errorOffset;
                 InvalidLexeme invalid = invalidLexemeAt(source, absoluteErrorOffset);
+                if (invalid == null) {
+                    return;
+                }
                 SourcePosition invalidStart = positionAtOffset(source, invalid.startOffset());
                 SourcePosition invalidEnd = positionAtOffset(source, invalid.lastCharacterOffset());
                 int removedTokens = removeTokensInside(tokens, source, invalid.startOffset(), invalid.endOffset());
                 number -= removedTokens;
 
-                String offendingCharacter = new String(Character.toChars(source.codePointAt(absoluteErrorOffset)));
+                String offendingCharacter = absoluteErrorOffset >= source.length()
+                        ? "<EOF>"
+                        : new String(Character.toChars(source.codePointAt(absoluteErrorOffset)));
                 Diagnostic global = new Diagnostic(
                         local.phase(),
-                        "El lexema completo es inválido porque contiene un carácter no permitido.",
+                        invalid.characterLiteral()
+                                ? "El literal de carácter está incompleto o contiene una secuencia no permitida."
+                                : "El lexema completo es inválido porque contiene un carácter no permitido.",
                         invalidStart.line(),
                         invalidStart.column(),
-                        local.expected(),
+                        invalid.characterLiteral()
+                                ? "Un carácter o escape válido entre comillas simples"
+                                : local.expected(),
                         "'" + escape(invalid.text()) + "' (carácter causante: '"
                                 + escape(offendingCharacter) + "')",
                         sourceLine(source, invalidStart.line())
@@ -125,6 +141,14 @@ public final class SourceAnalyzer {
     }
 
     private InvalidLexeme invalidLexemeAt(String source, int errorOffset) {
+        InvalidLexeme characterLiteral = invalidCharacterLiteralAt(source, errorOffset);
+        if (characterLiteral != null) {
+            return characterLiteral;
+        }
+        if (errorOffset >= source.length()) {
+            return null;
+        }
+
         int invalidCodePoint = source.codePointAt(errorOffset);
         int start = errorOffset;
         int end = errorOffset + Character.charCount(invalidCodePoint);
@@ -147,7 +171,65 @@ public final class SourceAnalyzer {
         }
 
         int lastCharacterOffset = end - Character.charCount(source.codePointBefore(end));
-        return new InvalidLexeme(start, end, lastCharacterOffset, source.substring(start, end));
+        return new InvalidLexeme(start, end, lastCharacterOffset, source.substring(start, end), false);
+    }
+
+    private InvalidLexeme invalidCharacterLiteralAt(String source, int errorOffset) {
+        int boundedOffset = Math.min(errorOffset, source.length());
+        int lineStart = boundedOffset;
+        while (lineStart > 0) {
+            char previous = source.charAt(lineStart - 1);
+            if (previous == '\n' || previous == '\r') {
+                break;
+            }
+            lineStart--;
+        }
+
+        int openingQuote = -1;
+        boolean escaped = false;
+        for (int index = lineStart; index < boundedOffset; index++) {
+            char character = source.charAt(index);
+            if (character == '\\' && openingQuote >= 0 && !escaped) {
+                escaped = true;
+                continue;
+            }
+            if (character == '\'' && !escaped) {
+                openingQuote = openingQuote < 0 ? index : -1;
+            }
+            escaped = false;
+        }
+        if (openingQuote < 0) {
+            return null;
+        }
+
+        int end = boundedOffset;
+        boolean closingEscaped = false;
+        while (end < source.length()) {
+            char character = source.charAt(end);
+            if (character == '\n' || character == '\r') {
+                break;
+            }
+            end++;
+            if (character == '\\' && !closingEscaped) {
+                closingEscaped = true;
+                continue;
+            }
+            if (character == '\'' && !closingEscaped) {
+                break;
+            }
+            closingEscaped = false;
+        }
+        if (end <= openingQuote) {
+            return null;
+        }
+        int lastCharacterOffset = end - Character.charCount(source.codePointBefore(end));
+        return new InvalidLexeme(
+                openingQuote,
+                end,
+                lastCharacterOffset,
+                source.substring(openingQuote, end),
+                true
+        );
     }
 
     private int removeTokensInside(List<TokenInfo> tokens, String source, int startOffset, int endOffset) {
@@ -284,10 +366,34 @@ public final class SourceAnalyzer {
     }
 
     private String tokenName(int kind) {
+        if (kind == ZigEduParserConstants.LEN) {
+            return "IDENTIFIER";
+        }
         if (kind < 0 || kind >= TOKEN_NAMES.length) {
             return "TOKEN_" + kind;
         }
         return TOKEN_NAMES[kind];
+    }
+
+    private static String[] buildTokenNames() {
+        String[] names = new String[ZigEduParserConstants.tokenImage.length];
+        Arrays.fill(names, "TOKEN");
+        for (Field field : ZigEduParserConstants.class.getFields()) {
+            if (field.getType() != int.class || !Modifier.isStatic(field.getModifiers())
+                    || field.getName().equals("DEFAULT")) {
+                continue;
+            }
+            try {
+                int kind = field.getInt(null);
+                if (kind >= 0 && kind < names.length) {
+                    names[kind] = field.getName();
+                }
+            } catch (IllegalAccessException exception) {
+                throw new ExceptionInInitializerError(exception);
+            }
+        }
+        names[ZigEduParserConstants.EOF] = "EOF";
+        return names;
     }
 
     private String displayToken(String tokenImage) {
@@ -316,6 +422,12 @@ public final class SourceAnalyzer {
     private record SourcePosition(int line, int column) {
     }
 
-    private record InvalidLexeme(int startOffset, int endOffset, int lastCharacterOffset, String text) {
+    private record InvalidLexeme(
+            int startOffset,
+            int endOffset,
+            int lastCharacterOffset,
+            String text,
+            boolean characterLiteral
+    ) {
     }
 }

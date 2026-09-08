@@ -24,12 +24,12 @@ La ventana incluye:
 - tabla secuencial del análisis sintáctico, con construcciones del AST, detalle y ubicación;
 - paneles independientes para errores léxicos y sintácticos;
 - diagnósticos con lo esperado, lo encontrado, línea, columna y fragmento señalado.
-- recuperación léxica para informar varios caracteres inválidos en una misma ejecución;
+- recuperación léxica y sintáctica para informar varios errores independientes en una misma ejecución;
 - indicador verde/rojo y alerta final con el resultado de cada análisis manual.
 
 Los elementos inválidos también aparecen en la tabla con tipo `ERROR_LEXICO` y fondo rojo. Si un carácter Unicode no admitido forma parte de una secuencia de identificador —por ejemplo `niño`— se informa la secuencia completa como un solo lexema inválido.
 
-Al iniciar, la aplicación carga una copia sin asociar a archivo del ejemplo completo de más de 350 líneas y lo analiza automáticamente. Esto permite revisar de inmediato las dos tablas; para modificar el archivo de ejemplo original debe abrirse explícitamente desde `examples/`.
+Al iniciar, la aplicación carga una copia sin asociar a archivo del ejemplo completo de más de 300 líneas y lo analiza automáticamente. Esto permite revisar de inmediato las dos tablas; para modificar el archivo de ejemplo original debe abrirse explícitamente desde `examples/`.
 
 Cada ejecución del análisis sobrescribe estos archivos dentro de `out/`:
 
@@ -40,7 +40,7 @@ Cada ejecución del análisis sobrescribe estos archivos dentro de `out/`:
 
 ## Ejemplo común
 
-[`examples/todas_las_funciones.zig`](examples/todas_las_funciones.zig) tiene más de 350 líneas y cubre las construcciones principales. Las pruebas comprueban que lo acepta este parser. También se valida con Zig 0.16 mediante:
+[`examples/todas_las_funciones.zig`](examples/todas_las_funciones.zig) tiene más de 300 líneas y cubre las construcciones principales. Las pruebas comprueban que lo acepta este parser. También se valida con Zig 0.16 mediante:
 
 ```bash
 zig build-exe examples/todas_las_funciones.zig -fno-emit-bin

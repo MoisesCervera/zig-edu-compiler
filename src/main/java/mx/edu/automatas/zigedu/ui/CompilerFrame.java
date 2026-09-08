@@ -26,6 +26,7 @@ import javax.swing.JTextArea;
 import javax.swing.JToolBar;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
+import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -36,6 +37,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Desktop;
 import java.awt.Font;
 import java.awt.Insets;
 import java.awt.Toolkit;
@@ -49,6 +51,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 /** Ventana principal del analizador educativo. */
@@ -108,6 +111,9 @@ public final class CompilerFrame extends JFrame {
     private final JLabel analysisBadge = new JLabel(" SIN EJECUTAR ");
 
     private Path currentFile;
+    private JButton analyzeButton;
+    private SwingWorker<AnalysisResult, Void> analysisWorker;
+    private boolean analysisRunning;
     private boolean dirty;
     private boolean replacingDocument;
 
@@ -144,15 +150,15 @@ public final class CompilerFrame extends JFrame {
 
         JButton open = toolbarButton("Abrir", this::openFile);
         JButton save = toolbarButton("Guardar", () -> save(false));
-        JButton analyze = toolbarButton("▶  Analizar", this::runAnalysis);
-        analyze.setBackground(BLUE);
-        analyze.setForeground(Color.WHITE);
-        analyze.setOpaque(true);
+        analyzeButton = toolbarButton("▶  Analizar", this::runAnalysis);
+        analyzeButton.setBackground(BLUE);
+        analyzeButton.setForeground(Color.WHITE);
+        analyzeButton.setOpaque(true);
 
         toolbar.add(open);
         toolbar.add(save);
         toolbar.addSeparator(new Dimension(16, 1));
-        toolbar.add(analyze);
+        toolbar.add(analyzeButton);
         toolbar.addSeparator(new Dimension(18, 1));
         JLabel phase = new JLabel("Fase actual: léxico + sintáctico");
         phase.setForeground(new Color(92, 99, 117));
@@ -205,7 +211,7 @@ public final class CompilerFrame extends JFrame {
         syntaxTable.setFont(CODE_FONT.deriveFont(12f));
         syntaxTable.setRowHeight(24);
         syntaxTable.setFillsViewportHeight(true);
-        syntaxTable.setAutoCreateRowSorter(true);
+        syntaxTable.setAutoCreateRowSorter(false);
         syntaxTable.getTableHeader().setReorderingAllowed(false);
 
         JTabbedPane results = new JTabbedPane();
@@ -294,7 +300,45 @@ public final class CompilerFrame extends JFrame {
     }
 
     private void runAnalysis(boolean showAlert) {
-        AnalysisResult result = analyzer.analyze(sourceEditor.getText());
+        if (analysisRunning) {
+            return;
+        }
+        String analyzedSource = sourceEditor.getText();
+        analysisRunning = true;
+        analyzeButton.setEnabled(false);
+        analysisBadge.setText(" ANALIZANDO… ");
+        analysisBadge.setBackground(BLUE);
+        analysisLabel.setText("Ejecutando análisis léxico y sintáctico…");
+
+        analysisWorker = new SwingWorker<>() {
+            @Override
+            protected AnalysisResult doInBackground() {
+                return analyzer.analyze(analyzedSource);
+            }
+
+            @Override
+            protected void done() {
+                analysisRunning = false;
+                analyzeButton.setEnabled(true);
+                if (!analyzedSource.equals(sourceEditor.getText())) {
+                    clearResults();
+                    analysisLabel.setText("El código cambió durante el análisis; ejecútalo nuevamente");
+                    return;
+                }
+                try {
+                    applyAnalysisResult(get(), showAlert);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    showAnalysisFailure(exception);
+                } catch (ExecutionException exception) {
+                    showAnalysisFailure(exception.getCause() == null ? exception : exception.getCause());
+                }
+            }
+        };
+        analysisWorker.execute();
+    }
+
+    private void applyAnalysisResult(AnalysisResult result, boolean showAlert) {
         updateTokens(result.tokens());
         syntaxModel.setRowCount(0);
         result.program().ifPresent(program -> {
@@ -350,6 +394,14 @@ public final class CompilerFrame extends JFrame {
         if (showAlert) {
             showAnalysisAlert(result);
         }
+    }
+
+    private void showAnalysisFailure(Throwable failure) {
+        clearResults();
+        analysisBadge.setText(" ⚠ FALLO INTERNO ");
+        analysisBadge.setBackground(FAILURE);
+        analysisLabel.setText("El análisis no pudo completarse");
+        showError("Ocurrió un fallo interno durante el análisis.", failure);
     }
 
     private void showAnalysisAlert(AnalysisResult result) {
@@ -473,7 +525,11 @@ public final class CompilerFrame extends JFrame {
 
     private void requestClose() {
         if (mayDiscardChanges()) {
+            if (analysisWorker != null && !analysisWorker.isDone()) {
+                analysisWorker.cancel(true);
+            }
             dispose();
+            System.exit(0);
         }
     }
 
@@ -525,9 +581,16 @@ public final class CompilerFrame extends JFrame {
     }
 
     private void showOutputPath() {
-        JOptionPane.showMessageDialog(this,
-                "Los resultados se reescriben después de cada análisis en:\n" + outputDirectory,
-                "Carpeta de resultados", JOptionPane.INFORMATION_MESSAGE);
+        try {
+            Files.createDirectories(outputDirectory);
+            if (!Desktop.isDesktopSupported()
+                    || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                throw new UnsupportedOperationException("El sistema no permite abrir carpetas desde Java.");
+            }
+            Desktop.getDesktop().open(outputDirectory.toFile());
+        } catch (IOException | UnsupportedOperationException exception) {
+            showError("No fue posible abrir la carpeta de resultados: " + outputDirectory, exception);
+        }
     }
 
     private JFileChooser createFileChooser() {
@@ -567,7 +630,7 @@ public final class CompilerFrame extends JFrame {
         return panel;
     }
 
-    private void showError(String message, Exception exception) {
+    private void showError(String message, Throwable exception) {
         JOptionPane.showMessageDialog(this, message + "\n\n" + exception.getMessage(),
                 "Error", JOptionPane.ERROR_MESSAGE);
     }

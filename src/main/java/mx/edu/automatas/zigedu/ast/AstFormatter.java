@@ -1,6 +1,5 @@
 package mx.edu.automatas.zigedu.ast;
 
-import javax.swing.tree.DefaultMutableTreeNode;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,14 +13,6 @@ public final class AstFormatter {
         StringBuilder output = new StringBuilder();
         appendText(node, output, 0);
         return output.toString();
-    }
-
-    public static DefaultMutableTreeNode toTree(Ast.Node node) {
-        DefaultMutableTreeNode treeNode = new DefaultMutableTreeNode(label(node));
-        for (Ast.Node child : childNodes(node)) {
-            treeNode.add(toTree(child));
-        }
-        return treeNode;
     }
 
     /** Representación plana del AST, adecuada para una lectura secuencial en la interfaz. */
@@ -125,7 +116,15 @@ public final class AstFormatter {
         for (RecordComponent component : node.getClass().getRecordComponents()) {
             Object value = componentValue(node, component);
             if (value == null || value instanceof Ast.Node || value instanceof Ast.SourceSpan
-                    || value instanceof List<?> || value instanceof Optional<?>) {
+                    || value instanceof List<?>) {
+                continue;
+            }
+            if (value instanceof Optional<?> optional) {
+                Object contained = optional.orElse(null);
+                if (contained == null || contained instanceof Ast.Node) {
+                    continue;
+                }
+                values.add(component.getName() + "=" + contained);
                 continue;
             }
             values.add(component.getName() + "=" + value);

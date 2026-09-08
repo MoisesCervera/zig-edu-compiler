@@ -145,6 +145,122 @@ class SourceAnalyzerTest {
     }
 
     @Test
+    void pointsToTheMissingExpressionAfterAnAssignmentOperator() {
+        AnalysisResult result = analyzer.analyze("pub fn main() void { var value: i32 = 0; value = ; }");
+
+        assertEquals(1, result.syntacticErrors().size());
+        Diagnostic error = result.syntacticErrors().getFirst();
+        assertTrue(error.found().contains("SEMICOLON"), error::found);
+        assertTrue(error.expected().contains("INTEGER"), error::expected);
+    }
+
+    @Test
+    void reportsMultipleIndependentSyntaxErrorsInOneRun() {
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const first: i32 = ;
+                    const valid: i32 = 1;
+                    const second: i32 = ;
+                    _ = valid;
+                }
+                """);
+
+        assertFalse(result.successful());
+        assertTrue(result.lexicalErrors().isEmpty());
+        assertEquals(2, result.syntacticErrors().size(), result.syntacticErrors()::toString);
+        assertEquals(List.of(2, 4), result.syntacticErrors().stream().map(Diagnostic::line).toList());
+        assertTrue(result.program().isPresent(), "Debe conservarse el AST parcial recuperado");
+    }
+
+    @Test
+    void acceptsLenAsAnIdentifierAndAsTheArrayLengthMember() {
+        AnalysisResult result = analyzer.analyze("""
+                fn len(len: i32) i32 { return len; }
+                pub fn main() void {
+                    const values = [_]i32{ 1, 2 };
+                    const measured: i32 = values.len;
+                    _ = len(measured);
+                }
+                """);
+
+        assertTrue(result.successful(), () -> result.syntacticErrors().toString());
+        assertEquals("len", result.program().orElseThrow().functions().getFirst().name());
+    }
+
+    @Test
+    void acceptsADiscardedForCapture() {
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const values = [_]i32{ 1, 2 };
+                    for (values) |_| { }
+                }
+                """);
+
+        assertTrue(result.successful(), () -> result.syntacticErrors().toString());
+        Ast.ForStmt loop = (Ast.ForStmt) result.program().orElseThrow()
+                .functions().getFirst().body().statements().get(1);
+        assertEquals("_", loop.capture());
+    }
+
+    @Test
+    void preservesLargeArraySizesWithoutCrashingTheAnalyzer() {
+        String size = "999999999999999999999";
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const values: [%s]i32 = [%s]i32{};
+                    _ = values;
+                }
+                """.formatted(size, size));
+
+        assertTrue(result.successful(), () -> result.syntacticErrors().toString());
+        Ast.VariableDecl declaration = (Ast.VariableDecl) result.program().orElseThrow()
+                .functions().getFirst().body().statements().getFirst();
+        Ast.ArrayType type = (Ast.ArrayType) declaration.declaredType().orElseThrow();
+        Ast.ArrayLiteral literal = (Ast.ArrayLiteral) declaration.initializer();
+        assertEquals(size, type.size());
+        assertEquals(size, literal.explicitSize().orElseThrow());
+    }
+
+    @Test
+    void groupsMalformedCharacterLiteralsAndContinuesLexicalAnalysis() {
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const invalidEscape: u8 = '\\x';
+                    const unclosed: u8 = 'a;
+                    const valid: i32 = 2;
+                }
+                """);
+
+        assertEquals(2, result.lexicalErrors().size(), result.lexicalErrors()::toString);
+        assertEquals(List.of("'\\x'", "'a;"), result.tokens().stream()
+                .filter(token -> token.type().equals("ERROR_LEXICO"))
+                .map(TokenInfo::lexeme)
+                .toList());
+        assertTrue(result.tokens().stream().anyMatch(token -> token.lexeme().equals("valid")));
+        assertTrue(result.lexicalErrors().stream()
+                .allMatch(error -> error.summary().contains("literal de carácter")));
+    }
+
+    @Test
+    void classifiesUnsupportedNumericFormsAsCompleteLexicalErrors() {
+        AnalysisResult result = analyzer.analyze("""
+                pub fn main() void {
+                    const separated = 1_000;
+                    const hexadecimal = 0xff;
+                    const valid = 1.5e2;
+                }
+                """);
+
+        assertEquals(2, result.lexicalErrors().size(), result.lexicalErrors()::toString);
+        assertEquals(List.of("1_000", "0xff"), result.tokens().stream()
+                .filter(token -> token.type().equals("ERROR_LEXICO"))
+                .map(TokenInfo::lexeme)
+                .toList());
+        assertTrue(result.tokens().stream().anyMatch(token -> token.lexeme().equals("1.5e2")
+                && token.type().equals("FLOAT")));
+    }
+
+    @Test
     void buildsTypedAstNodes() {
         AnalysisResult result = analyzer.analyze("fn double(value: i32) i32 { return value * 2; }");
 

@@ -65,8 +65,9 @@ public final class Ast {
         }
     }
 
-    public record ArrayType(int size, TypeNode elementType, SourceSpan span) implements TypeNode {
+    public record ArrayType(String size, TypeNode elementType, SourceSpan span) implements TypeNode {
         public ArrayType {
+            Objects.requireNonNull(size);
             Objects.requireNonNull(elementType);
         }
     }
@@ -175,7 +176,7 @@ public final class Ast {
     }
 
     public record ArrayLiteral(
-            Optional<Integer> explicitSize,
+            Optional<String> explicitSize,
             TypeNode elementType,
             List<Expression> elements,
             SourceSpan span
