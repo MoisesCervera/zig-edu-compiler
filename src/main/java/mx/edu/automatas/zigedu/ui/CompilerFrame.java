@@ -5,6 +5,7 @@ import mx.edu.automatas.zigedu.analysis.Diagnostic;
 import mx.edu.automatas.zigedu.analysis.ResultExporter;
 import mx.edu.automatas.zigedu.analysis.SourceAnalyzer;
 import mx.edu.automatas.zigedu.analysis.TokenInfo;
+import mx.edu.automatas.zigedu.analysis.SemanticResult;
 import mx.edu.automatas.zigedu.ast.AstFormatter;
 
 import javax.swing.BorderFactory;
@@ -101,6 +102,12 @@ public final class CompilerFrame extends JFrame {
         }
     };
     private final JTable syntaxTable = new JTable(syntaxModel);
+    private final DefaultTableModel semanticModel = new DefaultTableModel(
+            new String[]{"#", "Construcción", "Detalle", "Ubicación"}, 0) {
+        @Override public boolean isCellEditable(int row, int column) { return false; }
+    };
+    private final JTable semanticTable = new JTable(semanticModel);
+    private final JTextArea semanticErrors = resultArea();
     private final JTextArea lexicalErrors = resultArea();
     private final JTextArea syntacticErrors = resultArea();
     private final JTabbedPane errorTabs = new JTabbedPane();
@@ -118,7 +125,7 @@ public final class CompilerFrame extends JFrame {
     private boolean replacingDocument;
 
     public CompilerFrame() {
-        super("Zig Edu Compiler — análisis léxico y sintáctico");
+        super("Zig Edu Compiler — análisis léxico, sintáctico y semántico");
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         setMinimumSize(new Dimension(1050, 700));
         setSize(1380, 880);
@@ -160,7 +167,7 @@ public final class CompilerFrame extends JFrame {
         toolbar.addSeparator(new Dimension(16, 1));
         toolbar.add(analyzeButton);
         toolbar.addSeparator(new Dimension(18, 1));
-        JLabel phase = new JLabel("Fase actual: léxico + sintáctico");
+        JLabel phase = new JLabel("Fase actual: léxico + sintáctico + semántico");
         phase.setForeground(new Color(92, 99, 117));
         toolbar.add(phase);
         toolbar.add(Box.createHorizontalGlue());
@@ -239,12 +246,38 @@ public final class CompilerFrame extends JFrame {
             }
         });
 
+        semanticTable.setFont(CODE_FONT.deriveFont(12f));
+        semanticTable.setRowHeight(24);
+        semanticTable.setFillsViewportHeight(true);
+        semanticTable.getTableHeader().setReorderingAllowed(false);
+        semanticTable.getColumnModel().getColumn(0).setPreferredWidth(40);
+        semanticTable.getColumnModel().getColumn(0).setMaxWidth(55);
+        semanticTable.getColumnModel().getColumn(1).setPreferredWidth(155);
+        semanticTable.getColumnModel().getColumn(2).setPreferredWidth(330);
+        semanticTable.getColumnModel().getColumn(3).setPreferredWidth(80);
+        semanticTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean selected, boolean focused, int row, int column) {
+                Component component = super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+                boolean error = "Error semántico".equals(table.getValueAt(row, 1));
+                if (!selected) {
+                    component.setBackground(error ? new Color(255, 226, 226) : Color.WHITE);
+                    component.setForeground(error ? new Color(150, 25, 25) : new Color(35, 40, 50));
+                }
+                setFont(CODE_FONT.deriveFont(error ? Font.BOLD : Font.PLAIN, 12f));
+                setToolTipText(String.valueOf(value));
+                return component;
+            }
+        });
+
         JTabbedPane results = new JTabbedPane();
         results.addTab("Análisis léxico", new JScrollPane(tokenTable));
         results.addTab("Análisis sintáctico", new JScrollPane(syntaxTable));
+        results.addTab("Análisis semántico", new JScrollPane(semanticTable));
 
         errorTabs.addTab("Errores léxicos (0)", new JScrollPane(lexicalErrors));
         errorTabs.addTab("Errores sintácticos (0)", new JScrollPane(syntacticErrors));
+        errorTabs.addTab("Errores semánticos (0)", new JScrollPane(semanticErrors));
         errorTabs.setPreferredSize(new Dimension(500, 235));
 
         JSplitPane right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, results, errorTabs);
@@ -333,7 +366,7 @@ public final class CompilerFrame extends JFrame {
         analyzeButton.setEnabled(false);
         analysisBadge.setText(" ANALIZANDO… ");
         analysisBadge.setBackground(BLUE);
-        analysisLabel.setText("Ejecutando análisis léxico y sintáctico…");
+        analysisLabel.setText("Ejecutando análisis léxico, sintáctico y semántico…");
 
         analysisWorker = new SwingWorker<>() {
             @Override
@@ -366,6 +399,7 @@ public final class CompilerFrame extends JFrame {
     private void applyAnalysisResult(AnalysisResult result, boolean showAlert) {
         updateTokens(result.tokens());
         updateSyntaxAnalysis(result);
+        updateSemanticAnalysis(result);
         lexicalErrors.setText(diagnostics(result.lexicalErrors(), "Sin errores léxicos."));
         syntacticErrors.setText(result.lexicalErrors().isEmpty()
                 ? diagnostics(result.syntacticErrors(), "Sin errores sintácticos.")
@@ -374,19 +408,28 @@ public final class CompilerFrame extends JFrame {
         errorTabs.setTitleAt(1, result.lexicalErrors().isEmpty()
                 ? "Errores sintácticos (" + result.syntacticErrors().size() + ")"
                 : "Errores sintácticos (no ejecutado)");
+        semanticErrors.setText(result.semanticExecuted()
+                ? diagnostics(result.semanticErrors(), "Sin errores semánticos.")
+                : "El análisis semántico no se ejecutó. Corrige primero los errores léxicos o sintácticos.");
+        errorTabs.setTitleAt(2, result.semanticExecuted()
+                ? "Errores semánticos (" + result.semanticErrors().size() + ")"
+                : "Errores semánticos (no ejecutado)");
         if (!result.lexicalErrors().isEmpty()) {
             errorTabs.setSelectedIndex(0);
         } else if (!result.syntacticErrors().isEmpty()) {
             errorTabs.setSelectedIndex(1);
+        } else if (!result.semanticErrors().isEmpty()) {
+            errorTabs.setSelectedIndex(2);
         }
         lexicalErrors.setCaretPosition(0);
         syntacticErrors.setCaretPosition(0);
+        semanticErrors.setCaretPosition(0);
 
         if (result.successful()) {
             analysisBadge.setText(" ✓ SIN ERRORES ");
             analysisBadge.setBackground(SUCCESS);
         } else {
-            int totalErrors = result.lexicalErrors().size() + result.syntacticErrors().size();
+            int totalErrors = result.lexicalErrors().size() + result.syntacticErrors().size() + result.semanticErrors().size();
             analysisBadge.setText(" ⚠ " + totalErrors + (totalErrors == 1 ? " ERROR " : " ERRORES "));
             analysisBadge.setBackground(FAILURE);
         }
@@ -401,8 +444,9 @@ public final class CompilerFrame extends JFrame {
             showError("No fue posible escribir la carpeta de resultados.", exception);
         }
 
-        List<Diagnostic> allErrors = result.lexicalErrors().isEmpty()
-                ? result.syntacticErrors() : result.lexicalErrors();
+        List<Diagnostic> allErrors = java.util.stream.Stream.of(
+                result.lexicalErrors(), result.syntacticErrors(), result.semanticErrors())
+                .flatMap(List::stream).toList();
         if (!allErrors.isEmpty()) {
             moveCaretTo(allErrors.getFirst());
         }
@@ -423,7 +467,7 @@ public final class CompilerFrame extends JFrame {
         if (result.successful()) {
             JOptionPane.showMessageDialog(this,
                     "El análisis terminó correctamente.\n\n"
-                            + "No se encontraron errores léxicos ni sintácticos.",
+                            + "No se encontraron errores léxicos, sintácticos ni semánticos.",
                     "Análisis sin errores", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -431,12 +475,35 @@ public final class CompilerFrame extends JFrame {
         String syntacticCount = result.lexicalErrors().isEmpty()
                 ? Integer.toString(result.syntacticErrors().size())
                 : "no ejecutado por errores léxicos";
-        JOptionPane.showMessageDialog(this,
-                "El análisis terminó con errores.\n\n"
-                        + "Errores léxicos: " + result.lexicalErrors().size() + "\n"
-                        + "Errores sintácticos: " + syntacticCount + "\n\n"
-                        + "Consulta los paneles inferiores para ver cada diagnóstico.",
-                "Se encontraron errores", JOptionPane.ERROR_MESSAGE);
+        String semanticCount = result.semanticExecuted()
+                ? Integer.toString(result.semanticErrors().size())
+                : "no ejecutado por errores anteriores";
+        String details = "El análisis terminó con errores.\n\n"
+                + "Errores léxicos: " + result.lexicalErrors().size() + "\n"
+                + "Errores sintácticos: " + syntacticCount + "\n"
+                + "Errores semánticos: " + semanticCount + "\n\n"
+                + java.util.stream.Stream.of(result.lexicalErrors(), result.syntacticErrors(), result.semanticErrors())
+                    .flatMap(List::stream).map(Diagnostic::format)
+                    .collect(Collectors.joining("\n"));
+        JTextArea message = resultArea();
+        message.setText(details);
+        message.setCaretPosition(0);
+        JScrollPane scroll = new JScrollPane(message);
+        scroll.setPreferredSize(new Dimension(720, 420));
+        JOptionPane.showMessageDialog(this, scroll, "Se encontraron errores", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void updateSemanticAnalysis(AnalysisResult result) {
+        semanticModel.setRowCount(0);
+        if (!result.semanticExecuted()) {
+            semanticModel.addRow(new Object[]{1, "Análisis no ejecutado",
+                    "Corrige primero los errores léxicos o sintácticos.", "—"});
+            return;
+        }
+        for (SemanticResult.Entry entry : result.semantic().orElseThrow().entries()) {
+            semanticModel.addRow(new Object[]{semanticModel.getRowCount() + 1,
+                    entry.construction(), entry.detail(), entry.location()});
+        }
     }
 
     private void updateTokens(List<TokenInfo> tokens) {
@@ -619,6 +686,9 @@ public final class CompilerFrame extends JFrame {
     private void clearResults() {
         tokenModel.setRowCount(0);
         syntaxModel.setRowCount(0);
+        semanticModel.setRowCount(0);
+        semanticErrors.setText("Aún no se ha ejecutado el análisis.");
+        errorTabs.setTitleAt(2, "Errores semánticos (sin ejecutar)");
         lexicalErrors.setText("Aún no se ha ejecutado el análisis.");
         syntacticErrors.setText("Aún no se ha ejecutado el análisis.");
         errorTabs.setTitleAt(0, "Errores léxicos (sin ejecutar)");

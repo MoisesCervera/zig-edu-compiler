@@ -13,7 +13,8 @@ public record Diagnostic(
 ) {
     public enum Phase {
         LEXICAL("léxico"),
-        SYNTACTIC("sintáctico");
+        SYNTACTIC("sintáctico"),
+        SEMANTIC("semántico");
 
         private final String displayName;
 
@@ -43,9 +44,18 @@ public record Diagnostic(
                 .append("Se esperaba:\n    ").append(expected).append("\n\n")
                 .append("Se encontró:\n    ").append(found).append("\n");
         if (!sourceLine.isBlank()) {
-            result.append("\nContexto:\n    ").append(sourceLine).append("\n    ")
+            result.append("\nContexto:\n    ").append(expandTabs(sourceLine)).append("\n    ")
                     .append(" ".repeat(Math.max(column - 1, 0))).append("^\n");
         }
         return result.toString();
+    }
+
+    private String expandTabs(String text) {
+        StringBuilder expanded = new StringBuilder();
+        for (char c : text.toCharArray()) {
+            if (c == '\t') expanded.append(' '); // JavaCC 7 cuenta un tabulador como una columna.
+            else expanded.append(c);
+        }
+        return expanded.toString();
     }
 }

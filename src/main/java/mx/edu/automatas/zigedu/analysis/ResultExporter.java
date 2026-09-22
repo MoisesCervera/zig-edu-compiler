@@ -22,10 +22,36 @@ public final class ResultExporter {
         write("errores_sintacticos.txt", syntacticText(result));
         write("tokens.txt", tokensText(result.tokens()));
         write("ast.txt", result.program().map(AstFormatter::format).orElse("AST no disponible.\n"));
+        write("errores_semanticos.txt", semanticText(result));
+        write("analisis_semantico.txt", result.semantic().map(this::semanticTable).orElse("Análisis semántico no ejecutado.\n"));
+        write("tabla_simbolos.txt", result.semantic().map(this::symbolTable).orElse("Tabla de símbolos no disponible.\n"));
+        write("ast_anotado.txt", result.semantic().map(SemanticResult::annotatedAst).orElse("AST anotado no disponible.\n"));
     }
 
     public Path outputDirectory() {
         return outputDirectory;
+    }
+
+    private String semanticText(AnalysisResult result) {
+        if (!result.semanticExecuted()) return "El análisis semántico no se ejecutó; corrige primero los errores léxicos o sintácticos.\n";
+        return diagnosticsText(result.semanticErrors(), "Sin errores semánticos.");
+    }
+
+    private String semanticTable(SemanticResult result) {
+        StringBuilder text = new StringBuilder("CONSTRUCCIÓN\tDETALLE\tUBICACIÓN\n");
+        for (SemanticResult.Entry entry : result.entries()) {
+            text.append(entry.construction()).append('\t').append(entry.detail()).append('\t').append(entry.location()).append('\n');
+        }
+        return text.toString();
+    }
+
+    private String symbolTable(SemanticResult result) {
+        StringBuilder text = new StringBuilder("NOMBRE\tCLASE\tTIPO O FIRMA\tÁMBITO\tUBICACIÓN\n");
+        for (SemanticResult.SymbolInfo symbol : result.symbols()) {
+            text.append(symbol.name()).append('\t').append(symbol.kind()).append('\t').append(symbol.type())
+                    .append('\t').append(symbol.scope()).append('\t').append(symbol.location()).append('\n');
+        }
+        return text.toString();
     }
 
     private String syntacticText(AnalysisResult result) {

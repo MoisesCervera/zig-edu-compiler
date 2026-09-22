@@ -4,6 +4,7 @@ import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
 
 public final class AstFormatter {
     private AstFormatter() {
@@ -13,6 +14,22 @@ public final class AstFormatter {
         StringBuilder output = new StringBuilder();
         appendText(node, output, 0);
         return output.toString();
+    }
+
+    /** Mismo árbol, con anotaciones externas; el AST sintáctico permanece intacto. */
+    public static String formatAnnotated(Ast.Node node, Map<Ast.Node, String> annotations) {
+        StringBuilder output = new StringBuilder();
+        appendAnnotated(node, output, 0, annotations);
+        return output.toString();
+    }
+
+    private static void appendAnnotated(Ast.Node node, StringBuilder output, int depth,
+                                        Map<Ast.Node, String> annotations) {
+        output.append("  ".repeat(depth)).append(label(node));
+        String annotation = annotations.get(node);
+        if (annotation != null) output.append(" { ").append(annotation).append(" }");
+        output.append('\n');
+        for (Ast.Node child : childNodes(node)) appendAnnotated(child, output, depth + 1, annotations);
     }
 
     /** Representación plana del AST, adecuada para una lectura secuencial en la interfaz. */

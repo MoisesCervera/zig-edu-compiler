@@ -43,7 +43,10 @@ public final class SourceAnalyzer {
             syntacticErrors.addAll(parser.getRecoveredErrors().stream()
                     .map(error -> toSyntacticDiagnostic(error, safeSource))
                     .toList());
-            return new AnalysisResult(tokens, Optional.of(program), lexicalErrors, syntacticErrors);
+            Optional<SemanticResult> semantic = syntacticErrors.isEmpty()
+                    ? Optional.of(new SemanticAnalyzer(safeSource, tokens).analyze(program))
+                    : Optional.empty();
+            return new AnalysisResult(tokens, Optional.of(program), lexicalErrors, syntacticErrors, semantic);
         } catch (ParseException error) {
             syntacticErrors.addAll(parser.getRecoveredErrors().stream()
                     .map(recovered -> toSyntacticDiagnostic(recovered, safeSource))
@@ -275,7 +278,7 @@ public final class SourceAnalyzer {
                 line++;
                 column = 1;
             } else if (character == '\t') {
-                column += 8 - ((column - 1) % 8);
+                column++; // Mismo tabSize=1 que SimpleCharStream de JavaCC 7.
             } else {
                 column++;
             }
@@ -302,7 +305,7 @@ public final class SourceAnalyzer {
                 line++;
                 column = 1;
             } else if (character == '\t') {
-                column += 8 - ((column - 1) % 8);
+                column++;
             } else {
                 column++;
             }
