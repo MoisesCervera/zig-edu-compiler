@@ -185,6 +185,9 @@ TOKEN : {
         )
         "'"
     >
+|   < STRING_LITERAL:
+        "\"" ( ~["\"", "\\", "\r", "\n"] | "\\" ["n", "r", "t", "\\", "\"", "'", "0"] )* "\""
+    >
 |   < IDENTIFIER: ["A"-"Z", "a"-"z", "_"] (["A"-"Z", "a"-"z", "0"-"9", "_"])* >
 }
 
@@ -759,6 +762,8 @@ Expression PrimaryExpression() :
       { return new BooleanLiteral(false, span(token, token)); }
     | token = <CHAR_LITERAL>
       { return new CharLiteral(token.image, span(token, token)); }
+    | token = <STRING_LITERAL>
+      { return new StringLiteral(token.image, span(token, token)); }
     | token = IdentifierToken()
       { return new IdentifierExpr(token.image, span(token, token)); }
     | token = <UNDERSCORE>

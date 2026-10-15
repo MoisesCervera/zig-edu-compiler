@@ -172,6 +172,9 @@ public final class Ast {
     public record CharLiteral(String image, SourceSpan span) implements Expression {
     }
 
+    /** Literal reconocido para informar incompatibilidades en la fase semántica. */
+    public record StringLiteral(String image, SourceSpan span) implements Expression { }
+
     public record IdentifierExpr(String name, SourceSpan span) implements Expression {
     }
 
