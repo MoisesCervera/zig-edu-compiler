@@ -14,6 +14,22 @@ class ResultExporterTest {
     Path temporaryDirectory;
 
     @Test
+    void semanticReportsReplaceErrorsAndDoNotKeepStaleSymbolsWhenSkipped() throws Exception {
+        ResultExporter exporter = new ResultExporter(temporaryDirectory);
+        SourceAnalyzer analyzer = new SourceAnalyzer();
+        exporter.overwrite(analyzer.analyze("fn f() void { _ = missing; }"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("errores_semanticos.txt")).contains("SEM_NO_DECLARADO"));
+        exporter.overwrite(analyzer.analyze("fn f() void { const x: i32 = 1; _ = x; }"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("errores_semanticos.txt")).contains("Sin errores"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("tabla_simbolos.txt")).contains("x\tconst\ti32"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("ast_anotado.txt")).contains("tipo=i32"));
+        exporter.overwrite(analyzer.analyze("fn f() void { var x = ; }"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("errores_semanticos.txt")).contains("no se ejecutó"));
+        assertFalse(Files.readString(temporaryDirectory.resolve("tabla_simbolos.txt")).contains("x\tconst"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("ast_anotado.txt")).contains("no disponible"));
+    }
+
+    @Test
     void overwritesAllReportsOnEveryRun() throws Exception {
         ResultExporter exporter = new ResultExporter(temporaryDirectory);
         SourceAnalyzer analyzer = new SourceAnalyzer();

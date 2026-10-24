@@ -264,7 +264,9 @@ class SourceAnalyzerTest {
                 }
                 """.formatted(size, size));
 
-        assertTrue(result.successful(), () -> result.syntacticErrors().toString());
+        // La gramática conserva tamaños grandes; la nueva fase detecta que faltan elementos.
+        assertTrue(result.syntacticErrors().isEmpty(), () -> result.syntacticErrors().toString());
+        assertTrue(result.semanticErrors().stream().anyMatch(e -> e.summary().contains("SEM_TAMANO_ARREGLO")));
         Ast.VariableDecl declaration = (Ast.VariableDecl) result.program().orElseThrow()
                 .functions().getFirst().body().statements().getFirst();
         Ast.ArrayType type = (Ast.ArrayType) declaration.declaredType().orElseThrow();
