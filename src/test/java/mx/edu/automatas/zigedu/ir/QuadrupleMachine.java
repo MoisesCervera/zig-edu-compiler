@@ -2,13 +2,13 @@ package mx.edu.automatas.zigedu.ir;
 
 import java.util.*;
 
-/** Intérprete de referencia EXCLUSIVO de pruebas: valida saltos, llamadas y orden de evaluación. */
+/** Intérprete de referencia EXCLUSIVO de pruebas: valida saltos, llamadas y orden de evaluación de la traducción completa. */
 final class QuadrupleMachine {
     private final Map<String, List<IntermediateResult.Quadruple>> functions = new HashMap<>();
     private int fuel = 100_000;
     private record Address(List<Object> array, int index) { }
     QuadrupleMachine(IntermediateResult ir) {
-        for (var q : ir.quadruples()) functions.computeIfAbsent(q.function(), k -> new ArrayList<>()).add(q);
+        for (var q : ir.executable()) functions.computeIfAbsent(q.function(), k -> new ArrayList<>()).add(q);
     }
     Object call(String name, Object... args) {
         List<IntermediateResult.Quadruple> code = functions.get(name);

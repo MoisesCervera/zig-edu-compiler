@@ -114,7 +114,7 @@ class IntermediateGeneratorTest {
                 }
                 """);
         assertEquals(20, new QuadrupleMachine(ir).call("calc"));
-        assertEquals(1, ir.quadruples().stream().filter(q -> q.operator().equals("CALL") && q.argument1().equals("index")).count());
+        assertEquals(1, ir.executable().stream().filter(q -> q.operator().equals("CALL") && q.argument1().equals("index")).count());
     }
     @Test void translatesDecimalCharactersEmptyArraysAndVoidCalls() {
         var ir = valid("""
@@ -124,25 +124,64 @@ class IntermediateGeneratorTest {
                 """);
         var vm = new QuadrupleMachine(ir); assertEquals(11.0, vm.call("decimal")); assertEquals(65, vm.call("calc"));
     }
-    @Test void everyExpressionInTheCompleteExampleHasANotationAndLocation() throws Exception {
+    @Test void everyArithmeticOperationInTheCompleteExampleHasANotationAndLocation() throws Exception {
         var r = analyzer.analyze(Files.readString(Path.of("examples/todas_las_funciones.zig")));
         assertTrue(r.successful()); var ir = r.intermediate().orElseThrow();
         Set<Ast.SourceSpan> spans = new HashSet<>(); ir.notations().forEach(n -> spans.add(n.span()));
         // El formateador recorre todos los nodos. Las expresiones se cuentan mediante reflexión del AST.
         visit(r.program().orElseThrow(), spans);
-        assertEquals(30, ir.quadruples().stream().filter(q -> q.operator().equals("FUNC")).count());
-        assertTrue(ir.quadruples().size() > 300);
+        // La traducción completa sigue disponible para el resultado numérico; lo visible son sólo operaciones matemáticas.
+        assertEquals(30, ir.executable().stream().filter(q -> q.operator().equals("FUNC")).count());
+        assertTrue(ir.executable().size() > 300);
+        assertFalse(ir.quadruples().isEmpty());
+        assertTrue(ir.quadruples().stream().allMatch(q -> Set.of("+", "-", "*", "/", "%", "NEG", "=").contains(q.operator())));
         for (int i = 0; i < ir.quadruples().size(); i++) assertEquals(i + 1, ir.quadruples().get(i).number());
         assertTrue(ir.quadruples().stream().allMatch(q -> q.span().line() > 0 && !q.explanation().isBlank()));
     }
     private void visit(Ast.Node n, Set<Ast.SourceSpan> spans) throws Exception {
-        if (n instanceof Ast.Expression) assertTrue(spans.contains(n.span()), () -> "Expresión omitida " + n);
+        boolean arithmetic = n instanceof Ast.BinaryExpr b && Set.of("+", "-", "*", "/", "%").contains(b.operator())
+                || n instanceof Ast.UnaryExpr u && u.operator().equals("-");
+        if (arithmetic) assertTrue(spans.contains(n.span()), () -> "Operación omitida " + n);
         for (var c : n.getClass().getRecordComponents()) {
             Object v = c.getAccessor().invoke(n);
             if (v instanceof Ast.Node node) visit(node, spans);
             else if (v instanceof Optional<?> o && o.orElse(null) instanceof Ast.Node node) visit(node, spans);
             else if (v instanceof List<?> list) for (Object x : list) if (x instanceof Ast.Node node) visit(node, spans);
         }
+    }
+    @Test void analyzesOnlyMathematicalOperationsAndIgnoresEverythingElse() {
+        var ir = valid("""
+                fn add(left: i32, right: i32) i32 { return left + right; }
+                fn helper() i32 { return 7; }
+                pub fn main() void {
+                    const a: i32 = 10;
+                    const b: i32 = 4;
+                    const flag: bool = a > b;
+                    var r: i32 = a + b * 2;
+                    _ = r;
+                    _ = flag;
+                }
+                """);
+        // Sólo las líneas con operaciones: el return de add y la declaración de r.
+        assertEquals(List.of("+", "*", "+", "="), ir.quadruples().stream().map(IntermediateResult.Quadruple::operator).toList());
+        assertEquals(List.of("add", "main", "main", "main"), ir.quadruples().stream().map(IntermediateResult.Quadruple::function).toList());
+        assertTrue(ir.quadruples().stream().noneMatch(q -> Set.of("FUNC", "END_FUNC", "CONST", "VAR", "PARAM_DEF",
+                "RETURN", "DISCARD", "LABEL", "GOTO", "IF_FALSE", "CALL").contains(q.operator())));
+        assertEquals(List.of("Retorno", "Declaración var"), ir.notations().stream().map(IntermediateResult.Notation::context)
+                .filter(c -> c.equals("Retorno") || c.startsWith("Declaración")).toList());
+        // Siguen existiendo las tres notaciones y el resto de la traducción sólo se conserva internamente.
+        var decl = ir.notations().stream().filter(n -> n.context().equals("Declaración var")).findFirst().orElseThrow();
+        assertEquals("r = (a + (b * 2))", decl.infix()); assertEquals("r a b 2 * + =", decl.postfix()); assertEquals("= r + a * b 2", decl.prefix());
+        assertTrue(ir.executable().stream().anyMatch(q -> q.operator().equals("FUNC")));
+        for (int i = 0; i < ir.quadruples().size(); i++) assertEquals(i + 1, ir.quadruples().get(i).number());
+    }
+    @Test void mathOperationsKeepOperandsReadableWithoutHiddenTemporaries() {
+        var ir = valid("""
+                fn two() i32 { return 2; }
+                fn calc() i32 { var x: i32 = 1; const a = [_]i32{5, 6}; x += two() * a[1]; return x + a.len; }
+                """);
+        var shown = new ArrayList<String>(); ir.quadruples().forEach(q -> shown.add(q.tuple()));
+        assertEquals(List.of("(*, two(), a[1], $t1)", "(+, x, $t1, $t2)", "(=, $t2, —, x)", "(+, x, a.len, $t3)"), shown);
     }
     @ParameterizedTest @ValueSource(strings={"fn f() void { _ = @; }", "fn f() void { const x = ; }", "fn f() void { const x: i32 = true; }"})
     void blocksIntermediateCodeAfterAnyPreviousError(String source) { assertFalse(analyzer.analyze(source).intermediateExecuted()); }

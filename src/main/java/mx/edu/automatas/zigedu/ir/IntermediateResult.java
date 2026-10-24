@@ -3,12 +3,28 @@ package mx.edu.automatas.zigedu.ir;
 import mx.edu.automatas.zigedu.ast.Ast.SourceSpan;
 import java.util.List;
 
-/** Representación educativa de tres direcciones; cada instrucción tiene cuatro campos. */
-public record IntermediateResult(List<Quadruple> quadruples, List<Notation> notations) {
+/**
+ * Representación educativa de tres direcciones; cada instrucción tiene cuatro campos.
+ *
+ * <p>{@code quadruples} y {@code notations} contienen únicamente lo que se muestra y se exporta: las
+ * operaciones matemáticas del código fuente. {@code executable} conserva la traducción completa del
+ * programa y sólo sirve de entrada para calcular el resultado numérico ({@link NumericPreview});
+ * {@code executableNumbers} relaciona cada cuádruplo visible con su instrucción en esa traducción.
+ */
+public record IntermediateResult(List<Quadruple> quadruples, List<Notation> notations,
+                                 List<Quadruple> executable, List<Integer> executableNumbers) {
     public IntermediateResult {
         quadruples = List.copyOf(quadruples);
         notations = List.copyOf(notations);
+        executable = List.copyOf(executable);
+        executableNumbers = List.copyOf(executableNumbers);
     }
+    /** Resultado sin traducción separada: los cuádruplos visibles son también los ejecutables. */
+    public IntermediateResult(List<Quadruple> quadruples, List<Notation> notations) {
+        this(quadruples, notations, quadruples, java.util.stream.IntStream.rangeClosed(1, quadruples.size()).boxed().toList());
+    }
+    /** Número del cuádruplo visible {@code displayNumber} dentro de la traducción completa. */
+    public int executableNumber(int displayNumber) { return executableNumbers.get(displayNumber - 1); }
     public record Quadruple(int number, String function, String operator, String argument1,
                             String argument2, String result, SourceSpan span, String explanation) {
         public String location() { return span.line() + ":" + span.column(); }

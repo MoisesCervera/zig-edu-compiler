@@ -170,9 +170,9 @@ class CompilerFrameTest {
                     JTextArea notes=descendants(panel).stream().filter(JTextArea.class::isInstance).map(JTextArea.class::cast).findFirst().orElseThrow();
                     assertEquals("Programa completo",expressions.getSelectedItem().toString());
                     assertFalse(notes.getText().contains("Resultado numérico:"));
-                    expressions.setSelectedIndex(3); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
+                    expressions.setSelectedIndex(0); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
                     capture("resultado_numerico_18");
-                    expressions.setSelectedIndex(4); assertTrue(notes.getText().endsWith("Resultado numérico: 28"));
+                    expressions.setSelectedIndex(1); assertTrue(notes.getText().endsWith("Resultado numérico: 28"));
                     capture("resultado_numerico_28");
                     frame.setSize(1050,700); frame.validate(); capture("resultado_numerico_compacto");
                 } catch (Exception e) { throw new RuntimeException(e); }
@@ -196,7 +196,7 @@ class CompilerFrameTest {
                     results.setSelectedIndex(3);
                     IntermediatePanel panel = (IntermediatePanel)field("intermediatePanel");
                     List<JTable> tables = descendants(panel).stream().filter(JTable.class::isInstance).map(JTable.class::cast).toList();
-                    assertEquals(1,tables.size()); assertEquals(26,tables.getFirst().getRowCount());
+                    assertEquals(1,tables.size()); assertEquals(11,tables.getFirst().getRowCount());
                     JComboBox<?> expressions=descendants(panel).stream().filter(JComboBox.class::isInstance).map(JComboBox.class::cast).findFirst().orElseThrow();
                     assertEquals("Programa completo",expressions.getSelectedItem().toString());
                     capture("interfaz_programa_completo");

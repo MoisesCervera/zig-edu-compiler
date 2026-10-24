@@ -135,7 +135,14 @@ public final class IntermediatePanel extends JPanel {
     public void showResult(AnalysisResult analysis) {
         if (analysis.intermediate().isEmpty()) { clear("Sin código intermedio"); return; }
         var result = analysis.intermediate().get();
-        numericValues = NumericPreview.evaluate(result);
+        // La evaluación usa la traducción completa; aquí se indexa por el número del cuádruplo visible.
+        Map<Integer, NumericPreview.Values> evaluated = NumericPreview.evaluate(result);
+        Map<Integer, NumericPreview.Values> byDisplay = new java.util.HashMap<>();
+        for (Quadruple q : result.quadruples()) {
+            NumericPreview.Values v = evaluated.get(result.executableNumber(q.number()));
+            if (v != null) byDisplay.put(q.number(), v);
+        }
+        numericValues = byDisplay;
         List<Notation> roots = result.notations().stream().filter(IntermediatePanel::isRoot).toList();
         filling = true;
         expressions.removeAllItems();

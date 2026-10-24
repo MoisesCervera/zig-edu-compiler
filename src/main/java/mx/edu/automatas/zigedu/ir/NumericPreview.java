@@ -36,10 +36,15 @@ public final class NumericPreview {
     private static final class Unavailable extends RuntimeException { }
 
     private NumericPreview(IntermediateResult ir) {
-        for (var q : ir.quadruples()) functions.computeIfAbsent(q.function(), key -> new ArrayList<>()).add(q);
+        // Se evalúa la traducción completa (declaraciones, saltos, llamadas); los valores se indexan por su número.
+        for (var q : ir.executable()) functions.computeIfAbsent(q.function(), key -> new ArrayList<>()).add(q);
     }
 
-    /** No asigna valores ficticios a parámetros. Un fallo de evaluación no cambia los diagnósticos. */
+    /**
+     * No asigna valores ficticios a parámetros. Un fallo de evaluación no cambia los diagnósticos.
+     * Las claves son números de {@link IntermediateResult#executable()}; para un cuádruplo visible use
+     * {@link IntermediateResult#executableNumber(int)}.
+     */
     public static Map<Integer, Values> evaluate(IntermediateResult ir) {
         NumericPreview preview = new NumericPreview(ir);
         try {

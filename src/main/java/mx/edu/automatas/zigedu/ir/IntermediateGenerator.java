@@ -4,20 +4,33 @@ import mx.edu.automatas.zigedu.ast.Ast.*;
 import java.util.*;
 import static mx.edu.automatas.zigedu.ir.ExpressionNotation.type;
 
-/** Traducción directa del AST validado, sin optimización, para conservar cada operación visible. */
+/**
+ * Traducción directa del AST validado, sin optimización.
+ *
+ * <p>Sólo las operaciones matemáticas (+ - * / % y el signo menos unario, incluidas las asignaciones
+ * compuestas) forman los cuádruplos y las notaciones que se muestran y exportan. Declaraciones sin
+ * operaciones, firmas de función, tipos, retornos, saltos y llamadas no se analizan. La traducción completa se
+ * conserva únicamente como entrada interna del resultado numérico ({@link IntermediateResult#executable()}).
+ */
 public final class IntermediateGenerator {
     private final List<IntermediateResult.Quadruple> quads = new ArrayList<>();
     private final List<IntermediateResult.Notation> notations = new ArrayList<>();
     private final Set<Expression> recorded = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<String, FunctionDecl> functions = new HashMap<>();
     private final Deque<Loop> loops = new ArrayDeque<>();
+    /** Cuádruplos (por número en la traducción completa) que son operaciones matemáticas o guardan su resultado. */
+    private final Set<Integer> shown = new HashSet<>();
+    /** Temporales que no son operaciones matemáticas; se muestran como la expresión que los produjo. */
+    private final Map<String, String> aliases = new HashMap<>();
+    private static final Set<String> ARITHMETIC = Set.of("+", "-", "*", "/", "%");
     private String function;
     private int temporary, label;
     private record Loop(String continueLabel, String endLabel) { }
     private record Target(String name, boolean address) { }
 
     public IntermediateResult generate(Program program) {
-        quads.clear(); notations.clear(); recorded.clear(); functions.clear(); loops.clear(); temporary = label = 0;
+        quads.clear(); notations.clear(); recorded.clear(); functions.clear(); loops.clear();
+        shown.clear(); aliases.clear(); temporary = label = 0;
         for (FunctionDecl f : program.functions()) functions.put(f.name(), f);
         for (FunctionDecl f : program.functions()) {
             function = f.name();
@@ -32,61 +45,100 @@ public final class IntermediateGenerator {
             if (type(f.returnType()).equals("void")) emit("RETURN", "", "", "", f.body().span(), "Retorno implícito al finalizar una función void.");
             emit("END_FUNC", "", "", f.name(), f.span(), "Finalizar la traducción de " + f.name() + ".");
         }
-        return new IntermediateResult(quads, notations);
+        return mathView();
     }
+    /** Arma lo que se muestra: sólo las operaciones matemáticas, con temporales renumerados sin huecos. */
+    private IntermediateResult mathView() {
+        List<IntermediateResult.Quadruple> visible = quads.stream().filter(q -> shown.contains(q.number())).toList();
+        Map<String, String> renamed = new HashMap<>();
+        for (var q : visible) if (q.result().startsWith("$t") && !aliases.containsKey(q.result()))
+            renamed.putIfAbsent(q.result(), "$t" + (renamed.size() + 1));
+        List<IntermediateResult.Quadruple> math = new ArrayList<>(); List<Integer> origin = new ArrayList<>();
+        for (var q : visible) {
+            math.add(new IntermediateResult.Quadruple(math.size() + 1, q.function(), q.operator(), shownName(q.argument1(), renamed),
+                    shownName(q.argument2(), renamed), shownName(q.result(), renamed), q.span(), shownText(q.explanation(), renamed)));
+            origin.add(q.number());
+        }
+        return new IntermediateResult(math, notations, quads, origin);
+    }
+    private String shownName(String name, Map<String, String> renamed) {
+        String alias = aliases.get(name);
+        return alias != null ? alias : renamed.getOrDefault(name, name);
+    }
+    private String shownText(String text, Map<String, String> renamed) {
+        var m = java.util.regex.Pattern.compile("\\$t\\d+").matcher(text);
+        return m.replaceAll(r -> java.util.regex.Matcher.quoteReplacement(shownName(r.group(), renamed)));
+    }
+    private static boolean hasMath(Expression e) {
+        if (e instanceof BinaryExpr b) return ARITHMETIC.contains(b.operator()) || hasMath(b.left()) || hasMath(b.right());
+        if (e instanceof UnaryExpr u) return u.operator().equals("-") || hasMath(u.operand());
+        if (e instanceof CallExpr c) return hasMath(c.callee()) || c.arguments().stream().anyMatch(IntermediateGenerator::hasMath);
+        if (e instanceof IndexExpr i) return hasMath(i.target()) || hasMath(i.index());
+        if (e instanceof LengthExpr l) return hasMath(l.target());
+        if (e instanceof ArrayLiteral a) return a.elements().stream().anyMatch(IntermediateGenerator::hasMath);
+        return false;
+    }
+    private static boolean hasMath(AssignmentStmt a) { return !a.operator().equals("=") || hasMath(a.value()) || hasMath(a.target()); }
     private String temp() { return "$t" + (++temporary); }
     private String label() { return "$L" + (++label); }
     private void emit(String op, String a, String b, String r, SourceSpan s, String why) {
         quads.add(new IntermediateResult.Quadruple(quads.size() + 1, function, op, a, b, r, s, why));
+    }
+    private void emitShown(String op, String a, String b, String r, SourceSpan s, String why) {
+        emit(op, a, b, r, s, why); shown.add(quads.size());
     }
     private void mark(String l, SourceSpan s) { emit("LABEL", "", "", l, s, "Definir el destino de salto " + l + "."); }
     private void go(String l, SourceSpan s) { emit("GOTO", "", "", l, s, "Continuar en " + l + "."); }
     private String copy(String v, SourceSpan s, String reason) {
         String t = temp(); emit("=", v, "", t, s, reason); return t;
     }
-    private void notation(Expression e, String context) {
+    /** Registra la expresión raíz sólo si contiene una operación matemática. */
+    private void notation(Expression e, String context) { if (hasMath(e)) record(e, context); }
+    private void record(Expression e, String context) {
         if (!recorded.add(e)) return;
         var f = ExpressionNotation.of(e);
         notations.add(new IntermediateResult.Notation(notations.size() + 1, function, context,
                 f.infix(), f.postfix(), f.prefix(), e.span()));
-        if (e instanceof BinaryExpr b) { notation(b.left(), "Operando izquierdo"); notation(b.right(), "Operando derecho"); }
-        else if (e instanceof UnaryExpr u) notation(u.operand(), "Operando unario");
-        else if (e instanceof CallExpr c) { notation(c.callee(), "Función llamada"); for (Expression a : c.arguments()) notation(a, "Argumento"); }
-        else if (e instanceof IndexExpr i) { notation(i.target(), "Arreglo"); notation(i.index(), "Índice"); }
-        else if (e instanceof LengthExpr l) notation(l.target(), "Arreglo de .len");
-        else if (e instanceof ArrayLiteral a) for (Expression item : a.elements()) notation(item, "Elemento del arreglo");
+        if (e instanceof BinaryExpr b) { record(b.left(), "Operando izquierdo"); record(b.right(), "Operando derecho"); }
+        else if (e instanceof UnaryExpr u) record(u.operand(), "Operando unario");
+        else if (e instanceof CallExpr c) { record(c.callee(), "Función llamada"); for (Expression a : c.arguments()) record(a, "Argumento"); }
+        else if (e instanceof IndexExpr i) { record(i.target(), "Arreglo"); record(i.index(), "Índice"); }
+        else if (e instanceof LengthExpr l) record(l.target(), "Arreglo de .len");
+        else if (e instanceof ArrayLiteral a) for (Expression item : a.elements()) record(item, "Elemento del arreglo");
     }
     private void assignmentNotation(Expression target, String op, Expression value, SourceSpan s, String context) {
         var t = ExpressionNotation.of(target); var v = ExpressionNotation.of(value);
         notations.add(new IntermediateResult.Notation(notations.size() + 1, function, context,
                 t.infix() + " " + op + " " + v.infix(), t.postfix() + " " + v.postfix() + " " + op,
                 op + " " + t.prefix() + " " + v.prefix(), s));
-        notation(target, "Destino"); notation(value, "Valor de la asignación");
+        record(target, "Destino"); record(value, "Valor de la asignación");
     }
     private void statement(Statement s) {
         if (s instanceof Block b) { for (Statement item : b.statements()) statement(item); }
         else if (s instanceof VariableDecl d) {
-            assignmentNotation(new IdentifierExpr(d.name(), d.span()), "=", d.initializer(), d.span(), d.constant() ? "Declaración const" : "Declaración var");
+            if (hasMath(d.initializer())) assignmentNotation(new IdentifierExpr(d.name(), d.span()), "=", d.initializer(), d.span(), d.constant() ? "Declaración const" : "Declaración var");
             emit(d.constant() ? "CONST" : "VAR", d.declaredType().map(ExpressionNotation::type).orElse("inferido"), "", d.name(), d.span(), "Reservar " + d.name() + " para su inicializador.");
             String value = expression(d.initializer());
-            emit("=", value, "", d.name(), d.span(), "Guardar " + value + " en " + d.name() + ".");
+            if (hasMath(d.initializer())) emitShown("=", value, "", d.name(), d.span(), "Guardar " + value + " en " + d.name() + ".");
+            else emit("=", value, "", d.name(), d.span(), "Guardar " + value + " en " + d.name() + ".");
         } else if (s instanceof AssignmentStmt a) {
-            assignmentNotation(a.target(), a.operator(), a.value(), a.span(), "Asignación");
+            if (hasMath(a)) assignmentNotation(a.target(), a.operator(), a.value(), a.span(), "Asignación");
             if (a.target() instanceof IdentifierExpr id && id.name().equals("_")) {
                 emit("DISCARD", expression(a.value()), "", "", a.span(), "Descartar el valor, conservando las operaciones que lo producen."); return;
             }
             Target target = target(a.target());
             String old = null;
             if (!a.operator().equals("=")) {
-                if (target.address()) { old = temp(); emit("LOAD", target.name(), "", old, a.target().span(), "Leer una vez el elemento que se actualizará."); }
-                else old = copy(target.name(), a.target().span(), "Conservar el valor anterior para la asignación compuesta.");
+                if (target.address()) { old = temp(); emit("LOAD", target.name(), "", old, a.target().span(), "Leer una vez el elemento que se actualizará."); aliases.put(old, ExpressionNotation.of(a.target()).infix()); }
+                else { old = copy(target.name(), a.target().span(), "Conservar el valor anterior para la asignación compuesta."); aliases.put(old, target.name()); }
             }
             String value = expression(a.value());
             if (old != null) {
                 String t = temp(); String op = a.operator().substring(0, 1);
-                emit(op, old, value, t, a.span(), "Descomponer " + a.operator() + " en una operación " + op + " y una asignación."); value = t;
+                emitShown(op, old, value, t, a.span(), "Descomponer " + a.operator() + " en una operación " + op + " y una asignación."); value = t;
             }
-            emit(target.address() ? "STORE" : "=", value, "", target.name(), a.span(), "Guardar " + value + " en el destino de la asignación.");
+            if (!target.address() && hasMath(a)) emitShown("=", value, "", target.name(), a.span(), "Guardar " + value + " en el destino de la asignación.");
+            else emit(target.address() ? "STORE" : "=", value, "", target.name(), a.span(), "Guardar " + value + " en el destino de la asignación.");
         } else if (s instanceof ExpressionStmt e) { notation(e.expression(), "Expresión como sentencia"); expression(e.expression()); }
         else if (s instanceof ReturnStmt r) {
             r.value().ifPresent(v -> notation(v, "Retorno"));
@@ -165,11 +217,16 @@ public final class IntermediateGenerator {
         if (e instanceof BinaryExpr b) {
             if (b.operator().equals("and") || b.operator().equals("or")) return logical(b);
             String left = expression(b.left()), right = expression(b.right()), t = temp();
-            emit(b.operator(), left, right, t, b.span(), "Traducir " + ExpressionNotation.of(b).infix() + ": usar los operandos " + left + " y " + right + "; guardar el resultado en " + t + "."); return t;
+            String why = "Traducir " + ExpressionNotation.of(b).infix() + ": usar los operandos " + left + " y " + right + "; guardar el resultado en " + t + ".";
+            if (ARITHMETIC.contains(b.operator())) emitShown(b.operator(), left, right, t, b.span(), why);
+            else emit(b.operator(), left, right, t, b.span(), why);
+            return t;
         }
         if (e instanceof UnaryExpr u) {
             String a = expression(u.operand()), t = temp(), op = u.operator().equals("-") ? "NEG" : "!";
-            emit(op, a, "", t, u.span(), "Aplicar el operador unario " + op + " a " + a + "."); return t;
+            if (op.equals("NEG")) emitShown(op, a, "", t, u.span(), "Aplicar el operador unario " + op + " a " + a + ".");
+            else emit(op, a, "", t, u.span(), "Aplicar el operador unario " + op + " a " + a + ".");
+            return t;
         }
         if (e instanceof CallExpr c) {
             String name = ((IdentifierExpr)c.callee()).name();
@@ -177,20 +234,25 @@ public final class IntermediateGenerator {
             List<String> args = c.arguments().stream().map(this::expression).toList();
             for (int i = 0; i < args.size(); i++) emit("PARAM", args.get(i), "" + i, "", c.arguments().get(i).span(), "Preparar el argumento " + (i + 1) + " de " + name + ".");
             String t = type(functions.get(name).returnType()).equals("void") ? "" : temp();
-            emit("CALL", name, "" + args.size(), t, c.span(), "Llamar a " + name + " con " + args.size() + " argumento(s)" + (t.isEmpty() ? " sin valor de retorno." : "; conservar el retorno en " + t + ".")); return t.isEmpty() ? "void" : t;
+            emit("CALL", name, "" + args.size(), t, c.span(), "Llamar a " + name + " con " + args.size() + " argumento(s)" + (t.isEmpty() ? " sin valor de retorno." : "; conservar el retorno en " + t + "."));
+            if (!t.isEmpty()) aliases.put(t, ExpressionNotation.of(c).infix());
+            return t.isEmpty() ? "void" : t;
         }
         if (e instanceof ArrayLiteral a) {
             // Evaluar antes de crear el arreglo conserva el orden incluso con literales anidados.
             List<String> values = a.elements().stream().map(this::expression).toList(); String t = temp();
             emit("ARRAY", "" + values.size(), type(a.elementType()), t, a.span(), "Crear un arreglo de " + values.size() + " elemento(s).");
             for (int i = 0; i < values.size(); i++) emit("STORE_INDEX", values.get(i), "" + i, t, a.elements().get(i).span(), "Inicializar la posición " + i + " del arreglo " + t + ".");
+            aliases.put(t, ExpressionNotation.of(a).infix());
             return t;
         }
         if (e instanceof IndexExpr i) {
             String base = expression(i.target()), index = expression(i.index()), t = temp();
-            emit("LOAD_INDEX", base, index, t, i.span(), "Leer el elemento " + index + " del arreglo " + base + "."); return t;
+            emit("LOAD_INDEX", base, index, t, i.span(), "Leer el elemento " + index + " del arreglo " + base + ".");
+            aliases.put(t, ExpressionNotation.of(i).infix());
+            return t;
         }
-        if (e instanceof LengthExpr l) { String base = expression(l.target()), t = temp(); emit("LEN", base, "", t, l.span(), "Obtener la longitud de " + base + "."); return t; }
+        if (e instanceof LengthExpr l) { String base = expression(l.target()), t = temp(); emit("LEN", base, "", t, l.span(), "Obtener la longitud de " + base + "."); aliases.put(t, ExpressionNotation.of(l).infix()); return t; }
         throw new IllegalArgumentException("Expresión no soportada: " + e.getClass());
     }
     private String logical(BinaryExpr b) {

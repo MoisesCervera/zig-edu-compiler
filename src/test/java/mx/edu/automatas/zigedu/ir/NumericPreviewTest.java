@@ -15,7 +15,7 @@ class NumericPreviewTest {
     }
     private List<NumericPreview.Values> assignments(IntermediateResult ir,String function,String variable) {
         var values=NumericPreview.evaluate(ir);
-        return ir.quadruples().stream().filter(q -> q.function().equals(function) && q.operator().equals("=") && q.result().equals(variable))
+        return ir.executable().stream().filter(q -> q.function().equals(function) && q.operator().equals("=") && q.result().equals(variable))
                 .map(q -> values.get(q.number())).filter(Objects::nonNull).toList();
     }
     private String last(IntermediateResult ir,String variable) { return assignments(ir,"main",variable).getLast().last(); }
@@ -52,7 +52,7 @@ class NumericPreviewTest {
     @Test void functionCallsDoNotShareLocalVariables() {
         var ir=valid("fn inc(n:i32) i32 { var x:i32=n+1; return x; } fn main() void { const a=inc(1); const b=inc(7); }");
         assertEquals("2",last(ir,"a")); assertEquals("8",last(ir,"b"));
-        var q=ir.quadruples().stream().filter(v -> v.function().equals("inc") && v.operator().equals("RETURN")).findFirst().orElseThrow();
+        var q=ir.executable().stream().filter(v -> v.function().equals("inc") && v.operator().equals("RETURN")).findFirst().orElseThrow();
         assertEquals(List.of("2","8"),NumericPreview.evaluate(ir).get(q.number()).samples());
     }
     @Test void evaluatesArraysByValueAndMutatesTheOriginalIndexedDestination() {
@@ -68,11 +68,11 @@ class NumericPreviewTest {
         var ir=valid("fn bad(n:i32) i32 { return 10/n; } fn unused() i32 { return 77; } fn main() void { var n:i32=0; const flag=true or bad(n)>0; var r:i32=4; }");
         assertEquals("4",last(ir,"r"));
         var values=NumericPreview.evaluate(ir);
-        assertTrue(ir.quadruples().stream().filter(q -> !q.function().equals("main")).noneMatch(q -> values.containsKey(q.number())));
+        assertTrue(ir.executable().stream().filter(q -> !q.function().equals("main")).noneMatch(q -> values.containsKey(q.number())));
     }
     @Test void evaluatesAStandaloneFunctionOnlyWhenItsArgumentsAreKnown() {
         var ir=valid("fn calc() f64 { return 5; }");
-        var q=ir.quadruples().stream().filter(v -> v.operator().equals("RETURN")).findFirst().orElseThrow();
+        var q=ir.executable().stream().filter(v -> v.operator().equals("RETURN")).findFirst().orElseThrow();
         assertEquals("5.0",NumericPreview.evaluate(ir).get(q.number()).last());
         assertTrue(NumericPreview.evaluate(valid("fn calc(n:i32) i32 { return n+1; }")).isEmpty());
     }

@@ -66,12 +66,13 @@ class IntermediatePanelTest {
         onEdt(() -> {
             var p=panel("fn main() void { var a:i32=10; var b:i32=4; var r:i32=a+b*2; r=(a+b)*2; _=r; }");
             JComboBox<?> selector=field(p,"expressions",JComboBox.class); JTable table=field(p,"quadTable",JTable.class);
-            assertEquals(6,selector.getItemCount());
-            selector.setSelectedIndex(2); assertEquals(3,table.getRowCount()); assertEquals("*",table.getValueAt(0,0));
+            // Sólo las dos líneas con operaciones y el programa completo; las declaraciones sin operaciones no se listan.
+            assertEquals(3,selector.getItemCount());
+            selector.setSelectedIndex(0); assertEquals(3,table.getRowCount()); assertEquals("*",table.getValueAt(0,0));
             assertEquals("r",table.getValueAt(2,3)); assertFalse(field(p,"notations",JTextArea.class).getText().contains("a = 10"));
-            selector.setSelectedIndex(3); assertEquals(3,table.getRowCount());
+            selector.setSelectedIndex(1); assertEquals(3,table.getRowCount());
             assertEquals("+",table.getValueAt(0,0)); assertEquals("*",table.getValueAt(1,0));
-            selector.setSelectedIndex(0); assertEquals(1,table.getRowCount()); assertEquals("a",table.getValueAt(0,3));
+            selector.setSelectedIndex(2); assertEquals(6,table.getRowCount());
         });
     }
     @Test void fullProgramIsDefaultAfterEachAnalysisAndPreservesEveryQuadruple() throws Exception {
@@ -93,13 +94,15 @@ class IntermediatePanelTest {
             }
         });
     }
-    @Test void conditionExcludesBranchAssignmentsAndOtherFunctions() throws Exception {
+    @Test void onlyLinesWithOperationsAreListedAcrossFunctions() throws Exception {
         onEdt(() -> {
             var p=panel("fn first() void { var x:i32=1; if(x>0) { x=x+2; } } fn second() void { var x:i32=8+9; }");
-            JComboBox<?> selector=field(p,"expressions",JComboBox.class); selector.setSelectedIndex(1);
+            JComboBox<?> selector=field(p,"expressions",JComboBox.class);
+            assertEquals(3,selector.getItemCount()); // x = x + 2, x = 8 + 9 y el programa completo; "x > 0" no tiene operaciones
+            selector.setSelectedIndex(0); assertTrue(selector.getSelectedItem().toString().startsWith("first"));
             JTable table=field(p,"quadTable",JTable.class); assertEquals(2,table.getRowCount());
-            assertEquals(">",table.getValueAt(0,0)); assertEquals("IF_FALSE",table.getValueAt(1,0));
-            selector.setSelectedIndex(3); assertTrue(selector.getSelectedItem().toString().startsWith("second"));
+            assertEquals("+",table.getValueAt(0,0)); assertEquals("=",table.getValueAt(1,0));
+            selector.setSelectedIndex(1); assertTrue(selector.getSelectedItem().toString().startsWith("second"));
             assertEquals(2,table.getRowCount()); assertEquals("8",table.getValueAt(0,1));
         });
     }
@@ -122,19 +125,18 @@ class IntermediatePanelTest {
             var analysis=new SourceAnalyzer().analyze("fn main() void { return; }");
             var p=new IntermediatePanel(s -> { }); p.showResult(analysis);
             assertEquals(1,field(p,"expressions",JComboBox.class).getItemCount());
-            assertEquals(analysis.intermediate().orElseThrow().quadruples().size(),field(p,"quadTable",JTable.class).getRowCount());
+            assertEquals(0,analysis.intermediate().orElseThrow().quadruples().size());
+            assertEquals(0,field(p,"quadTable",JTable.class).getRowCount());
             assertEquals("",field(p,"notations",JTextArea.class).getText());
         });
     }
-    @Test void returnsIncludeTheirFinalInstructionEvenForLiteralValues() throws Exception {
+    @Test void returnsShowOnlyTheirOperationAndLiteralReturnsAreIgnored() throws Exception {
         onEdt(() -> {
             var p=panel("fn first() i32 { return 2; } fn second() i32 { return 3+4; }");
             JTable table=field(p,"quadTable",JTable.class);
-            assertEquals(1,table.getRowCount()); assertEquals("RETURN",table.getValueAt(0,0));
-            assertEquals("2",table.getValueAt(0,1));
-            field(p,"expressions",JComboBox.class).setSelectedIndex(1);
-            assertEquals(2,table.getRowCount()); assertEquals("+",table.getValueAt(0,0));
-            assertEquals("RETURN",table.getValueAt(1,0));
+            assertEquals(2,field(p,"expressions",JComboBox.class).getItemCount()); // return 3+4 y el programa completo
+            assertEquals(1,table.getRowCount()); assertEquals("+",table.getValueAt(0,0));
+            assertEquals("3",table.getValueAt(0,1)); assertEquals("4",table.getValueAt(0,2));
         });
     }
     @Test void numericalNotesUseTheValueAtEachAssignmentAndKeepTheFullViewUnchanged() throws Exception {
@@ -144,24 +146,24 @@ class IntermediatePanelTest {
             JTextArea notes=field(p,"notations",JTextArea.class);
             assertFalse(notes.getText().contains("Resultado numérico:"));
             JComboBox<?> selector=field(p,"expressions",JComboBox.class);
-            selector.setSelectedIndex(3); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
-            selector.setSelectedIndex(4); assertTrue(notes.getText().endsWith("Resultado numérico: 28"));
+            assertEquals(3,selector.getItemCount()); // sólo las dos líneas con operaciones y el programa completo
+            selector.setSelectedIndex(0); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
+            selector.setSelectedIndex(1); assertTrue(notes.getText().endsWith("Resultado numérico: 28"));
             assertEquals(3,field(p,"quadTable",JTable.class).getRowCount());
-            selector.setSelectedIndex(3); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
+            selector.setSelectedIndex(0); assertTrue(notes.getText().endsWith("Resultado numérico: 18"));
             p.showResult(new SourceAnalyzer().analyze("fn main() void { const value:bool=true; }"));
-            selector.setSelectedIndex(0); assertEquals(3,notes.getText().lines().count());
-            assertFalse(notes.getText().contains("numérico"));
+            selector.setSelectedIndex(0); assertEquals("",notes.getText()); // sin operaciones no hay nada que analizar
+            assertEquals(0,field(p,"quadTable",JTable.class).getRowCount());
         });
     }
     @Test void arraysAndTheirForSourceDoNotDisplayTheirLengthAsANumericResult() throws Exception {
         onEdt(() -> {
-            var p=panel("fn main() void { const a=[_]i32{2,3}; for(a) |x| { _=x; } }");
+            var p=panel("fn main() void { const a=[_]i32{2,3}; for(a) |x| { const d:i32=x*1; _=d; } }");
             JComboBox<?> selector=field(p,"expressions",JComboBox.class);
-            assertFalse(field(p,"notations",JTextArea.class).getText().contains("numérico"));
+            assertEquals(2,selector.getItemCount()); // sólo x * 1 y el programa completo; el arreglo y el for no se analizan
+            assertTrue(field(p,"notations",JTextArea.class).getText().contains("Resultados numéricos (2 evaluaciones): 2, 3"));
             selector.setSelectedIndex(1);
             assertFalse(field(p,"notations",JTextArea.class).getText().contains("numérico"));
-            selector.setSelectedIndex(2);
-            assertTrue(field(p,"notations",JTextArea.class).getText().contains("Resultados numéricos (2 evaluaciones): 2, 3"));
         });
     }
 }
