@@ -83,8 +83,9 @@ class CompilerFrameTest {
                     List<JTabbedPane> tabs = descendants(frame).stream().filter(JTabbedPane.class::isInstance)
                             .map(JTabbedPane.class::cast).toList();
                     JTabbedPane results = tabs.stream().filter(t -> t.getTitleAt(0).equals("Análisis léxico")).findFirst().orElseThrow();
-                    assertEquals(4, results.getTabCount());
+                    assertEquals(5, results.getTabCount());
                     assertEquals("Código intermedio", results.getTitleAt(3));
+                    assertEquals("Optimización", results.getTitleAt(4));
                     assertEquals("Análisis sintáctico", results.getTitleAt(1));
                     assertEquals("Análisis semántico", results.getTitleAt(2));
                     results.setSelectedIndex(2);
@@ -239,4 +240,45 @@ class CompilerFrameTest {
         } finally { SwingUtilities.invokeAndWait(() -> frame.dispose()); }
     }
 
+    @Test void optimizationTabShowsOptimizedCodeAndComparisonBelow() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            try { UIManager.setLookAndFeel("javax.swing.plaf.nimbus.NimbusLookAndFeel"); }
+            catch (Exception e) { throw new RuntimeException(e); }
+            frame = new CompilerFrame(); frame.setVisible(true);
+        });
+        try {
+            awaitAnalysis();
+            analyze(Files.readString(Path.of("examples/optimizacion/01_todas_las_tecnicas.zig")));
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    JTabbedPane results = descendants(frame).stream().filter(JTabbedPane.class::isInstance)
+                            .map(JTabbedPane.class::cast).filter(t -> t.getTitleAt(0).equals("Análisis léxico")).findFirst().orElseThrow();
+                    JTabbedPane errors = (JTabbedPane) field("errorTabs");
+                    errors.setSelectedIndex(1);
+                    results.setSelectedIndex(4);
+                    assertEquals(3, errors.getSelectedIndex());
+                    assertEquals("Bitácora", errors.getTitleAt(3));
+                    OptimizationPanel panel = (OptimizationPanel) field("optimizationPanel");
+                    String code = panel.optimizedCode();
+                    assertTrue(code.contains("const segundosPorDia = 86400;"), code);
+                    assertFalse(code.contains("fn sinUso"), code);
+                    String log = ((OptimizationLogPanel) field("optimizationLog")).text();
+                    assertTrue(log.contains("Comparación: código original vs. optimizado"), log);
+                    assertTrue(log.contains("Tiempo de ejecución"), log);
+                    assertFalse(log.contains("Cuádruplos"), log);
+                    capture("optimizacion");
+                    results.setSelectedIndex(0);
+                    assertEquals(1, errors.getSelectedIndex());
+                } catch (Exception e) { throw new RuntimeException(e); }
+            });
+            assertTrue(Files.readString(Path.of("out/codigo_optimizado.zig")).contains("fn main"));
+            analyze("fn main() void { var x = ; }");
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    assertFalse(((OptimizationPanel) field("optimizationPanel")).current().available());
+                    assertTrue(((OptimizationLogPanel) field("optimizationLog")).text().contains("no se ejecutó"));
+                } catch (Exception e) { throw new RuntimeException(e); }
+            });
+        } finally { SwingUtilities.invokeAndWait(() -> frame.dispose()); }
+    }
 }

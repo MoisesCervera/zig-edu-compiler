@@ -8,7 +8,20 @@ public final class NumericPreview {
     private static final int MAX_STEPS = 50_000, MAX_DEPTH = 100, MAX_ARRAY = 10_000, MAX_SAMPLES = 8;
     private final Map<String, List<IntermediateResult.Quadruple>> functions = new LinkedHashMap<>();
     private final Map<Integer, History> histories = new HashMap<>();
-    private int remaining = MAX_STEPS;
+    private long remaining = MAX_STEPS;
+    private static final Set<String> PSEUDO = Set.of("FUNC", "END_FUNC", "LABEL", "VAR", "CONST", "PARAM_DEF", "PARAM_CAPTURE");
+    private boolean trace;
+    private long operations;
+    private Set<String> entryOutputs = Set.of();
+    private final List<String> observations = new ArrayList<>();
+
+    /**
+     * @param operations   cuádruplos ejecutados sin contar etiquetas ni declaraciones
+     * @param observations descartes {@code _ =}, retornos del punto de entrada y valor final de las variables de main
+     */
+    public record Execution(boolean completed, long operations, List<String> observations) {
+        public Execution { observations = List.copyOf(observations); }
+    }
 
     public record Values(List<String> samples, int count, String last) {
         public Values { samples = List.copyOf(samples); }
@@ -65,6 +78,45 @@ public final class NumericPreview {
         return Map.copyOf(result);
     }
 
+    /** Ejecuta el programa completo con el mismo punto de entrada que {@link #evaluate}. */
+    public static Execution execute(IntermediateResult ir, long maxSteps, Set<String> mainOutputs) {
+        NumericPreview run = new NumericPreview(ir);
+        run.remaining = maxSteps;
+        run.trace = true;
+        run.entryOutputs = Set.copyOf(mainOutputs);
+        try {
+            if (run.functions.containsKey("main")) {
+                if (!run.functions.get("main").getFirst().argument2().equals("0")) return new Execution(false, 0, List.of());
+                Object value = run.call("main", List.of(), 0);
+                if (value != Empty.VALUE) run.observations.add("main devuelve " + display(value));
+            } else {
+                boolean any = false;
+                for (var entry : run.functions.entrySet()) {
+                    if (entry.getValue().getFirst().argument2().equals("0")) {
+                        any = true;
+                        Object value = run.call(entry.getKey(), List.of(), 0);
+                        if (value != Empty.VALUE) run.observations.add(entry.getKey() + " devuelve " + display(value));
+                    }
+                }
+                if (!any) return new Execution(false, 0, List.of());
+            }
+        } catch (Unavailable | ArithmeticException | IndexOutOfBoundsException failure) {
+            return new Execution(false, run.operations, run.observations);
+        }
+        return new Execution(true, run.operations, run.observations);
+    }
+
+    private static String display(Object value) {
+        if (value instanceof Num n) return n.integer() == null ? Double.toString(n.decimal()) : n.integer().toString();
+        if (value instanceof ArrayValue a) {
+            StringJoiner items = new StringJoiner(", ", "[", "]");
+            for (Object item : a.values()) items.add(display(item));
+            return items.toString();
+        }
+        if (value == Empty.VALUE) return "void";
+        return String.valueOf(value);
+    }
+
     private Object call(String name, List<Object> arguments, int depth) {
         if (depth >= MAX_DEPTH) throw new Unavailable();
         List<IntermediateResult.Quadruple> code = functions.get(name);
@@ -78,6 +130,7 @@ public final class NumericPreview {
             if (--remaining < 0) throw new Unavailable();
             var q = code.get(pc);
             String op = q.operator(), a = q.argument1(), b = q.argument2(), r = q.result();
+            if (trace && !PSEUDO.contains(op)) operations++;
             Object produced = Empty.VALUE;
             switch (op) {
                 case "FUNC", "END_FUNC", "LABEL" -> { }
@@ -100,9 +153,18 @@ public final class NumericPreview {
                 case "RETURN" -> {
                     produced = a.isEmpty() ? Empty.VALUE : coerce(value(a, vars), code.getFirst().argument1());
                     remember(q.number(), produced);
+                    if (trace && depth == 0 && name.equals("main")) {
+                        for (String output : new TreeSet<>(entryOutputs)) {
+                            Object current = vars.get(output);
+                            if (current != null && current != Empty.VALUE) observations.add(output + " = " + display(current));
+                        }
+                    }
                     return copy(produced);
                 }
-                case "DISCARD" -> produced = value(a, vars);
+                case "DISCARD" -> {
+                    produced = value(a, vars);
+                    if (trace) observations.add(name + ": _ = " + display(produced));
+                }
                 case "GOTO" -> pc = destination(labels, r);
                 case "IF_FALSE" -> { if (!bool(value(a, vars))) pc = destination(labels, r); }
                 case "IF_TRUE" -> { if (bool(value(a, vars))) pc = destination(labels, r); }

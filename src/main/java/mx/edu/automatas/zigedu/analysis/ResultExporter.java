@@ -1,6 +1,7 @@
 package mx.edu.automatas.zigedu.analysis;
 
 import mx.edu.automatas.zigedu.ast.AstFormatter;
+import mx.edu.automatas.zigedu.opt.OptimizationResult;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +31,12 @@ public final class ResultExporter {
         write("notaciones.txt", result.intermediate().map(r -> r.notationsText()).orElse(skipped));
         write("pasos_codigo_intermedio.txt", result.intermediate().map(r -> r.stepsText()).orElse(skipped));
         write("ast_anotado.txt", result.semantic().map(SemanticResult::annotatedAst).orElse("AST anotado no disponible.\n"));
+    }
+
+    public void overwriteOptimization(OptimizationResult result) throws IOException {
+        Files.createDirectories(outputDirectory);
+        write("codigo_optimizado.zig", result.available() ? result.optimizedSource() : "// " + result.message() + "\n");
+        write("bitacora_optimizacion.txt", result.comparisonText());
     }
 
     public Path outputDirectory() {
