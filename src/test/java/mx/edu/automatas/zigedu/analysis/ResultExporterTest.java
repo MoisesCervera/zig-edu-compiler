@@ -66,4 +66,15 @@ class ResultExporterTest {
         String ast = Files.readString(temporaryDirectory.resolve("ast.txt"));
         assertTrue(ast.contains("explicitSize=3"), ast);
     }
+
+    @Test
+    void exportsOptimizedCodeAndComparison() throws Exception {
+        ResultExporter exporter = new ResultExporter(temporaryDirectory);
+        var service = new mx.edu.automatas.zigedu.opt.OptimizationService();
+        exporter.overwriteOptimization(service.optimize(new SourceAnalyzer().analyze("pub fn main() void { const x = 2 * 3; _ = x; }")));
+        assertTrue(Files.readString(temporaryDirectory.resolve("codigo_optimizado.zig")).contains("_ = 6;"));
+        assertTrue(Files.readString(temporaryDirectory.resolve("bitacora_optimizacion.txt")).contains("Tokens"));
+        exporter.overwriteOptimization(service.optimize(new SourceAnalyzer().analyze("pub fn main() void { const x = ; }")));
+        assertTrue(Files.readString(temporaryDirectory.resolve("codigo_optimizado.zig")).contains("no se ejecutó"));
+    }
 }

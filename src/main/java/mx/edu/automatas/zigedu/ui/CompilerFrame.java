@@ -7,6 +7,8 @@ import mx.edu.automatas.zigedu.analysis.SourceAnalyzer;
 import mx.edu.automatas.zigedu.analysis.TokenInfo;
 import mx.edu.automatas.zigedu.analysis.SemanticResult;
 import mx.edu.automatas.zigedu.ast.AstFormatter;
+import mx.edu.automatas.zigedu.opt.OptimizationResult;
+import mx.edu.automatas.zigedu.opt.OptimizationService;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -108,6 +110,9 @@ public final class CompilerFrame extends JFrame {
     };
     private final JTable semanticTable = new JTable(semanticModel);
     private final IntermediatePanel intermediatePanel = new IntermediatePanel(this::moveToIntermediateSource);
+    private final OptimizationService optimizationService = new OptimizationService();
+    private final OptimizationPanel optimizationPanel = new OptimizationPanel(this::saveOptimizedCode);
+    private final OptimizationLogPanel optimizationLog = new OptimizationLogPanel();
     private final JTextArea semanticErrors = resultArea();
     private final JTextArea lexicalErrors = resultArea();
     private final JTextArea syntacticErrors = resultArea();
@@ -120,7 +125,10 @@ public final class CompilerFrame extends JFrame {
 
     private Path currentFile;
     private JButton analyzeButton;
-    private SwingWorker<AnalysisResult, Void> analysisWorker;
+    private SwingWorker<Outcome, Void> analysisWorker;
+    private int errorTabBeforeLog = -1;
+
+    private record Outcome(AnalysisResult analysis, OptimizationResult optimization) { }
     private boolean analysisRunning;
     private boolean dirty;
     private boolean replacingDocument;
@@ -168,7 +176,7 @@ public final class CompilerFrame extends JFrame {
         toolbar.addSeparator(new Dimension(16, 1));
         toolbar.add(analyzeButton);
         toolbar.addSeparator(new Dimension(18, 1));
-        JLabel phase = new JLabel("Fase actual: léxico + sintáctico + semántico + intermedio");
+        JLabel phase = new JLabel("Fase actual: léxico + sintáctico + semántico + intermedio + optimización");
         phase.setForeground(new Color(92, 99, 117));
         toolbar.add(phase);
         toolbar.add(Box.createHorizontalGlue());
@@ -276,11 +284,24 @@ public final class CompilerFrame extends JFrame {
         results.addTab("Análisis sintáctico", new JScrollPane(syntaxTable));
         results.addTab("Análisis semántico", new JScrollPane(semanticTable));
         results.addTab("Código intermedio", intermediatePanel);
+        results.addTab("Optimización", optimizationPanel);
 
         errorTabs.addTab("Errores léxicos (0)", new JScrollPane(lexicalErrors));
         errorTabs.addTab("Errores sintácticos (0)", new JScrollPane(syntacticErrors));
         errorTabs.addTab("Errores semánticos (0)", new JScrollPane(semanticErrors));
+        errorTabs.addTab("Bitácora", optimizationLog);
         errorTabs.setPreferredSize(new Dimension(500, 235));
+        results.addChangeListener(event -> {
+            boolean optimizationVisible = results.getSelectedComponent() == optimizationPanel;
+            int logIndex = errorTabs.indexOfComponent(optimizationLog);
+            if (optimizationVisible && errorTabs.getSelectedIndex() != logIndex) {
+                errorTabBeforeLog = errorTabs.getSelectedIndex();
+                errorTabs.setSelectedIndex(logIndex);
+            } else if (!optimizationVisible && errorTabs.getSelectedIndex() == logIndex && errorTabBeforeLog >= 0) {
+                errorTabs.setSelectedIndex(errorTabBeforeLog);
+                errorTabBeforeLog = -1;
+            }
+        });
 
         JSplitPane right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, results, errorTabs);
         right.setResizeWeight(0.62);
@@ -338,6 +359,8 @@ public final class CompilerFrame extends JFrame {
                 if (!replacingDocument) {
                     dirty = true;
                     intermediatePanel.clear("Código modificado");
+                    optimizationPanel.clear("Código modificado");
+                    optimizationLog.clear("Código modificado");
                 }
                 updateDocumentStatus();
                 updateTitle();
@@ -373,8 +396,15 @@ public final class CompilerFrame extends JFrame {
 
         analysisWorker = new SwingWorker<>() {
             @Override
-            protected AnalysisResult doInBackground() {
-                return analyzer.analyze(analyzedSource);
+            protected Outcome doInBackground() {
+                AnalysisResult analysis = analyzer.analyze(analyzedSource);
+                OptimizationResult optimized;
+                try {
+                    optimized = optimizationService.optimize(analysis);
+                } catch (RuntimeException failure) {
+                    optimized = OptimizationResult.notRun("La optimización no pudo completarse: " + failure.getMessage());
+                }
+                return new Outcome(analysis, optimized);
             }
 
             @Override
@@ -387,7 +417,9 @@ public final class CompilerFrame extends JFrame {
                     return;
                 }
                 try {
-                    applyAnalysisResult(get(), showAlert);
+                    Outcome outcome = get();
+                    applyOptimization(outcome.optimization());
+                    applyAnalysisResult(outcome.analysis(), showAlert);
                 } catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
                     showAnalysisFailure(exception);
@@ -397,6 +429,34 @@ public final class CompilerFrame extends JFrame {
             }
         };
         analysisWorker.execute();
+    }
+
+    private void applyOptimization(OptimizationResult result) {
+        optimizationPanel.showResult(result);
+        optimizationLog.showResult(result);
+        try {
+            exporter.overwriteOptimization(result);
+        } catch (IOException exception) {
+            analysisLabel.setText("No se pudieron exportar el código optimizado y su bitácora");
+        }
+    }
+
+    private void saveOptimizedCode(String code) {
+        JFileChooser chooser = createFileChooser();
+        String base = currentFile == null ? "programa" : currentFile.getFileName().toString().replaceFirst("\\.[^.]*$", "");
+        chooser.setSelectedFile(new java.io.File(chooser.getCurrentDirectory(), base + "_optimizado.zig"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path target = chooser.getSelectedFile().toPath();
+        if (Files.exists(target) && JOptionPane.showConfirmDialog(this, "El archivo ya existe. ¿Deseas reemplazarlo?",
+                "Confirmar reemplazo", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try {
+            Files.writeString(target, code, StandardCharsets.UTF_8);
+            analysisLabel.setText("Código optimizado guardado en " + target.toAbsolutePath());
+        } catch (IOException exception) {
+            showError("No fue posible guardar el código optimizado.", exception);
+        }
     }
 
     private void applyAnalysisResult(AnalysisResult result, boolean showAlert) {
@@ -698,6 +758,8 @@ public final class CompilerFrame extends JFrame {
 
     private void clearResults() {
         intermediatePanel.clear("Sin analizar");
+        optimizationPanel.clear("");
+        optimizationLog.clear("Aún no se ha ejecutado el análisis.");
         tokenModel.setRowCount(0);
         syntaxModel.setRowCount(0);
         semanticModel.setRowCount(0);
